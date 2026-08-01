@@ -1,0 +1,1819 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>伯乐职南 · 后台管理</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="sidebar">
+  <div class="sidebar-logo">
+    <div class="sidebar-brand">
+      <img id="sidebarMascot" src="/static/mascot.png" class="sidebar-mascot" onerror="this.style.display='none'">
+      <div>
+        <h1>伯乐职南</h1>
+        <div class="sub">Salon Ops</div>
+      </div>
+    </div>
+  </div>
+  <div class="sidebar-nav">
+    <div class="nav-section">运营管理</div>
+    <a class="active" onclick="goPage('dashboard',this)"><span class="nav-icon">◉</span> <span>总览</span></a>
+    <a onclick="goPage('activities',this)"><span class="nav-icon">◈</span> <span>活动管理</span></a>
+    <a onclick="goPage('taskboard',this)"><span class="nav-icon">☰</span> <span>任务看板</span><span class="nav-badge" id="taskBadge">0</span></a>
+    <a onclick="goPage('templates',this)"><span class="nav-icon">◈</span> <span>物料模板</span></a>
+    <div class="nav-section">报名与客户</div>
+    <a onclick="goPage('registration',this)"><span class="nav-icon">◉</span> <span>报名管理</span></a>
+    <a onclick="goPage('checkin',this)"><span class="nav-icon">◈</span> <span>签到管理</span></a>
+    <a onclick="goPage('customers',this)"><span class="nav-icon">◉</span> <span>客户管理</span></a>
+    <div class="nav-section">数据</div>
+    <a onclick="goPage('databoard',this)"><span class="nav-icon">◉</span> <span>数据看板</span></a>
+    <a onclick="goPage('feishu',this)"><span class="nav-icon">🔗</span> <span>飞书数据</span></a>
+    <div class="nav-section">对外页面</div>
+    <a onclick="openRegisterPage()"><span class="nav-icon">◉</span> <span>报名页</span></a>
+    <a onclick="goPage('feedbacks',this)"><span class="nav-icon">💬</span> <span>反馈总结</span></a>
+    <a onclick="goPage('settings',this)"><span class="nav-icon">⚙</span> <span>设置</span></a>
+  </div>
+  <div style="margin-top:auto;padding:12px 16px;border-top:1px solid var(--navy-border);font-size:11px;color:rgba(255,255,255,0.3);">
+    <a href="/logout" style="color:rgba(255,255,255,0.4);text-decoration:none;">退出登录</a>
+  </div>
+</div>
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-left">
+      <span class="breadcrumb" id="breadcrumb">总览 <span>/ Dashboard</span></span>
+    </div>
+    <div class="topbar-right">
+      <span style="font-size:12px;color:var(--text-muted);">{{ display_name }} · {{ role }}</span>
+      <span style="font-size:11px;color:var(--gold);background:var(--gold-bg);padding:2px 8px;border-radius:4px;" title="局域网访问地址">🔗 {{ lan_ip }}:5000</span>
+      <div class="topbar-avatar" style="background:var(--gold);color:var(--navy);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;">{{ display_name[0] if display_name else 'M' }}</div>
+    </div>
+  </div>
+  <div class="content" id="mainContent">
+    <!-- ===== PAGES LOADED BY JAVASCRIPT ===== -->
+  </div>
+</div>
+<div id="toast" class="toast"><span id="toastIcon">✅</span><span id="toastMsg">操作成功</span></div>
+
+<script>
+// ── State ──
+let currentActivity = null;
+let pendingTaskboardActivity = null; // 从总览跳转待办时，预选的活动ID
+
+// ── Navigation ──
+function goPage(page, el) {
+  document.querySelectorAll('.sidebar-nav a').forEach(a => a.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const names = { dashboard:'总览', activities:'活动管理', taskboard:'任务看板',
+    templates:'物料模板', registration:'报名管理', checkin:'签到管理',
+    customers:'客户管理', databoard:'数据看板', feedbacks:'反馈总结', settings:'设置', feishu:'飞书数据' };
+  document.getElementById('breadcrumb').innerHTML = (names[page]||page) + ' <span>/ '+(names[page]||page)+'</span>';
+  window['load_' + page]();
+}
+
+// 从总览待办跳转到任务看板，自动选中对应活动
+function goTaskboard(aid) {
+  pendingTaskboardActivity = aid;
+  // 找到侧边栏「任务看板」链接并激活
+  const links = document.querySelectorAll('.sidebar-nav a');
+  let target = null;
+  for (const a of links) {
+    if (a.getAttribute('onclick') && a.getAttribute('onclick').includes("taskboard")) {
+      target = a; break;
+    }
+  }
+  goPage('taskboard', target);
+}
+
+// ── Toast ──
+function showToast(type, msg) {
+  const t = document.getElementById('toast');
+  t.className = 'toast ' + type;
+  document.getElementById('toastIcon').textContent = type==='success'?'✅':'⚠️';
+  document.getElementById('toastMsg').textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+function api(path, opts={}) {
+  return fetch(path, { headers:{'Content-Type':'application/json'}, ...opts })
+    .then(r => r.json().then(d => r.ok ? d : Promise.reject(d.error || '请求失败')));
+}
+
+function esc(s){ return String(s||'').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: DASHBOARD
+// ─────────────────────────────────────────────────────────────────
+async function load_dashboard() {
+  const html = '<div class="page-header"><div><h2>总览 Dashboard</h2><p class="subtitle">沙龙运营全局数据，一目了然</p></div><div class="page-header-right"><button class="btn btn-primary" onclick="goPage(\'activities\',document.querySelector(\'.sidebar-nav a:nth-child(2)\'))">＋ 新建活动</button></div></div>' +
+    '<div id="salonIntroBanner" style="background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:14px;font-size:13px;color:var(--text-light);display:none;"></div>' +
+    '<div class="stats-row" id="dashStats"></div>' +
+    '<div class="charts-row"><div class="chart-card"><h3>到场率趋势</h3><div class="chart-bars" id="dashTrend"></div></div><div class="chart-card"><h3>渠道来源分布</h3><div id="dashChannel" style="display:flex;align-items:center;gap:18px;min-height:120px;"></div></div></div>' +
+    '<div class="stats-row" style="grid-template-columns:1fr 1fr;"><div class="chart-card"><h3>⚠️ 待办事项 · 逾期任务</h3><div id="dashTodos" class="todo-list"></div></div><div class="chart-card"><h3>新老客户占比</h3><div id="dashRepeat"></div></div></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  // Load salon intro & mascot
+  fetch('/api/config/salon_intro').then(r=>r.json()).then(d => {
+    if(d.value) {
+      const banner = document.getElementById('salonIntroBanner');
+      if(banner) {
+        banner.innerHTML = '📖 <strong>伯乐职南</strong> · ' + esc(d.value);
+        banner.style.display = 'block';
+      }
+    }
+  }).catch(()=>{});
+  fetch('/api/mascot/check').then(r=>r.json()).then(d => {
+    if(d.exists) {
+      const mb = document.getElementById('mascotBanner');
+      if(mb) {
+        mb.style.display = 'block';
+        mb.innerHTML = '<img src="/static/mascot.png?' + Date.now() + '" style="max-height:80px;border-radius:8px;float:right;margin-left:12px;">';
+      }
+    }
+  }).catch(()=>{});
+  // Load reminder
+  setTimeout(() => {
+    const statsDiv = document.getElementById('dashStats');
+    if(statsDiv) {
+      const card = statsDiv.parentElement;
+      card.insertAdjacentHTML('afterbegin', '<div id="reminderBanner" style="display:none;"></div>');
+    }
+  }, 100);
+  try {
+    const stats = await api('/api/dashboard/stats');
+    document.getElementById('dashStats').innerHTML =
+      `<div class="stat-card accent-gold"><div class="label">累计活动</div><div class="value">${stats.total_activities}</div></div>` +
+      `<div class="stat-card accent-blue"><div class="label">总参与人次</div><div class="value">${stats.total_registrations}</div></div>` +
+      `<div class="stat-card accent-green"><div class="label">到场率</div><div class="value">${stats.attendance_rate}%</div></div>` +
+      `<div class="stat-card accent-orange"><div class="label">本月新增客户</div><div class="value">${stats.new_customers}</div></div>`;
+    // 活动提醒 - 明天有活动
+    if(stats.reminders && stats.reminders.length) {
+      const rb = document.getElementById('reminderBanner') || document.getElementById('dashStats');
+      if(rb) {
+        const html = stats.reminders.map(r =>
+          `<div style="background:#fff7ed;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:14px;">
+            <strong style="color:#c2410c;">🔔 明天有活动！</strong>
+            第6期 · ${esc(r.name)} · ${r.date} ${r.time} · ${r.registrations} 人报名
+            <span style="color:var(--text-light);margin-left:6px;">需提醒 ${r.to_remind} 人</span>
+          </div>`
+        ).join('');
+        if(document.getElementById('reminderBanner')) {
+          document.getElementById('reminderBanner').innerHTML = html;
+          document.getElementById('reminderBanner').style.display = 'block';
+        } else {
+          document.getElementById('dashStats').insertAdjacentHTML('beforebegin', html);
+        }
+      }
+    }
+    // 趋势
+    const trends = await api('/api/dashboard/trends');
+    const c = document.getElementById('dashTrend');
+    if(!trends.length) { c.innerHTML = '<span style="color:var(--text-light);font-size:13px;">暂无数据</span>'; }
+    else { c.innerHTML = trends.map(t =>
+      `<div class="chart-bar-col"><span class="bar-value">${t.rate}%</span><div class="chart-bar-fill" style="height:${Math.round(t.rate*0.9)}px;"></div><span class="bar-label">${esc(t.name)}</span></div>`
+    ).join(''); }
+    // 渠道
+    const channels = await api('/api/dashboard/channels');
+    const chDiv = document.getElementById('dashChannel');
+    const colors = ['var(--gold)','var(--blue)','var(--green)','var(--orange)','var(--red)','var(--purple)'];
+    const total = channels.reduce((s,c)=>s+c.count,0);
+    const angles = []; let deg=0;
+    channels.forEach((c,i)=>{const a=Math.round(c.count/total*360); angles.push({start:deg,end:deg+a,color:colors[i%6]}); deg+=a; });
+    if(!channels.length) { chDiv.innerHTML = '<span style="color:var(--text-light);">暂无渠道数据</span>'; }
+    else {
+      const last = angles[angles.length-1]; if(last.end<360) last.end=360;
+      const gradient = angles.map(a=>`${a.color} ${a.start}deg ${a.end}deg`).join(', ');
+      chDiv.innerHTML = `<div class="pie-circle" style="background:conic-gradient(${gradient})"></div><div class="pie-legend">` +
+        channels.map((c,i)=>`<div class="pie-legend-item"><span class="dot" style="background:${colors[i%6]}"></span> ${esc(c.name)} ${c.percent}%</div>`).join('') + '</div>';
+    }
+    // 待办
+    const todosDiv = document.getElementById('dashTodos');
+    if(!stats.todos.length) { todosDiv.innerHTML = '<div class="state-empty"><div class="icon">✅</div><p>所有任务已完成</p></div>'; }
+    else {
+      todosDiv.innerHTML = stats.todos.map(t => {
+        const cl = t.status==='overdue'?'red':t.due_date&&t.due_date<new Date().toISOString().slice(0,10)?'orange':'green';
+        return `<div class="todo-item" onclick="goTaskboard(${t.activity_id})" style="cursor:pointer"><span class="dot ${cl}"></span><span class="text">${esc(t.name)}</span><span class="meta">${t.assignee?'👤'+esc(t.assignee):''} ${t.due_date||''}</span></div>`;
+      }).join('');
+    }
+    // 复购率
+    document.getElementById('dashRepeat').innerHTML =
+      `<div style="display:flex;align-items:center;gap:18px;"><div class="pie-circle" style="width:80px;height:80px;background:conic-gradient(var(--gold) 0deg ${Math.round(stats.repeat_rate*3.6)}deg, var(--border) ${Math.round(stats.repeat_rate*3.6)}deg 360deg)"></div><div class="pie-legend">` +
+      `<div class="pie-legend-item"><span class="dot" style="background:var(--gold)"></span> 老客户 <strong>${stats.repeat_rate}%</strong></div>` +
+      `<div class="pie-legend-item"><span class="dot" style="background:var(--border)"></span> 新客户 <strong>${100-stats.repeat_rate}%</strong></div></div></div>` +
+      `<div style="margin-top:12px;font-size:12px;color:var(--text-light);">基于 ${stats.total_customers} 位客户数据</div>`;
+    document.getElementById('taskBadge').textContent = stats.overdue_tasks || '0';
+  } catch(e) { showToast('error', '加载数据失败: '+e); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: ACTIVITIES
+// ─────────────────────────────────────────────────────────────────
+async function load_activities() {
+  const html = '<div class="page-header"><div><h2>活动管理</h2><p class="subtitle">查看和管理所有沙龙活动</p></div><div class="page-header-right"><button class="btn btn-primary" onclick="showActivityModal()">＋ 新建活动</button></div></div>' +
+    '<div class="filter-bar" id="actFilters"><button class="filter-btn active" onclick="filterActivities(\'\',this)">全部</button><button class="filter-btn" onclick="filterActivities(\'draft\',this)">草稿</button><button class="filter-btn" onclick="filterActivities(\'published\',this)">报名中</button><button class="filter-btn" onclick="filterActivities(\'ended\',this)">已结束</button></div>' +
+    '<div class="table-wrap"><table><thead><tr><th>活动名称</th><th>主题</th><th>日期</th><th>状态</th><th>报名/到场</th><th>操作</th></tr></thead><tbody id="actList"></tbody></table></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  await filterActivities('');
+}
+
+async function filterActivities(status, el) {
+  if(el) { document.querySelectorAll('#actFilters .filter-btn').forEach(b=>b.classList.remove('active')); el.classList.add('active'); }
+  try {
+    const acts = await api('/api/activities'+(status?'?status='+status:''));
+    const tbody = document.getElementById('actList');
+    if(!acts.length) { tbody.innerHTML = '<tr><td colspan="6"><div class="state-empty"><p>还没有活动，点击"新建活动"开始</p></div></td></tr>'; return; }
+    tbody.innerHTML = acts.map(a => {
+      const statusMap = {draft:'草稿',published:'报名中',ongoing:'进行中',ended:'已结束'};
+      const tagMap = {draft:'tag-gray',published:'tag-blue',ongoing:'tag-orange',ended:'tag-green'};
+      return `<tr><td><strong>${esc(a.name)}</strong></td><td style="color:var(--text-light)">${esc(a.theme)}</td><td>${a.date}</td><td><span class="tag ${tagMap[a.status]||'tag-gray'}">${statusMap[a.status]||a.status}</span></td>`+
+        `<td>${a.registration_count}/${a.max_participants||30} · ${a.attendance}%</td>`+
+        `<td><button class="btn btn-sm btn-outline" onclick="editActivity(${a.id})">编辑</button> `+
+        `<button class="btn btn-sm btn-primary" onclick="editActivityDetail(${a.id})" style="background:var(--gold-bg);color:var(--gold-dark);border-color:var(--gold);">详情编辑</button> `+
+        (a.status==='draft'?`<button class="btn btn-sm btn-primary" onclick="publishActivity(${a.id})">发布</button> `:'')+
+        `<button class="btn btn-sm btn-ghost" onclick="viewActivity(${a.id})">查看</button> `+
+        `<button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteActivity(${a.id})">删除</button></td></tr>`;
+    }).join('');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function showActivityModal(act) {
+  const isEdit = !!act;
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="actModal"><div class="modal"><div class="modal-head"><h3>${isEdit?'编辑活动':'新建活动'}</h3><button class="modal-close" onclick="document.getElementById('actModal').remove()">✕</button></div><div class="modal-body">`+
+    `<div class="form-group"><label>活动名称</label><input id="af_name" value="${esc(act?.name||'')}"></div>`+
+    `<div class="form-row"><div class="form-group"><label>主题</label><input id="af_theme" value="${esc(act?.theme||'')}"></div>`+
+    `<div class="form-group"><label>票价(元)</label><input id="af_price" type="number" value="${act?.ticket_price||0}"></div></div>`+
+    `<div class="form-row"><div class="form-group"><label>日期</label><input id="af_date" type="date" value="${act?.date||''}"></div>`+
+    `<div class="form-group"><label>时间</label><input id="af_time" value="${esc(act?.time||'')}"></div></div>`+
+    `<div class="form-row"><div class="form-group"><label>地点</label><input id="af_venue" value="${esc(act?.venue||'')}"></div>`+
+    `<div class="form-group"><label>限额人数</label><input id="af_max" type="number" value="${act?.max_participants||30}"></div></div>`+
+    `<div class="form-group"><label>嘉宾描述</label><input id="af_guest" value="${esc(act?.guest_desc||'')}"></div>`+
+    (!isEdit?`<div class="form-group"><label>基于某期创建（可选）</label><select id="af_based"><option value="">— 手动创建 —</option></select></div>`:'')+
+    `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('actModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="${isEdit?`saveEditActivity(${act.id})`:'saveNewActivity()'}">${isEdit?'保存':'创建'}</button></div></div></div>`);
+  if(!isEdit) {
+    api('/api/activities').then(acts => {
+      const sel = document.getElementById('af_based');
+      acts.filter(a=>a.status!='draft').forEach(a => { sel.innerHTML += `<option value="${a.id}">${esc(a.name)}</option>`; });
+    });
+  }
+}
+
+async function saveNewActivity() {
+  const data = { name:af_name.value, theme:af_theme.value, date:af_date.value, time:af_time.value,
+    venue:af_venue.value, guest_desc:af_guest.value, ticket_price:af_price.value||0,
+    max_participants:af_max.value||30, based_on_id:af_based?.value||null };
+  try {
+    await api('/api/activities', { method:'POST', body:JSON.stringify(data) });
+    document.getElementById('actModal').remove();
+    showToast('success','✅ 活动创建成功');
+    filterActivities();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function editActivity(id) {
+  const act = await api('/api/activities/'+id);
+  showActivityModal(act);
+}
+
+async function saveEditActivity(id) {
+  const data = { name:af_name.value, theme:af_theme.value, date:af_date.value, time:af_time.value,
+    venue:af_venue.value, guest_desc:af_guest.value, ticket_price:af_price.value||0, max_participants:af_max.value||30 };
+  try {
+    await api('/api/activities/'+id, { method:'PUT', body:JSON.stringify(data) });
+    document.getElementById('actModal').remove();
+    showToast('success','✅ 保存成功');
+    filterActivities();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ── 活动详情编辑 ──
+let detailFlowRows = [];
+
+async function editActivityDetail(id) {
+  const act = await api('/api/activities/'+id);
+  detailFlowRows = [];
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="actDetailModal" style="z-index:1100;"><div class="modal" style="max-width:700px;"><div class="modal-head"><h3>📝 报名页详情编辑 · ${esc(act.name)}</h3><button class="modal-close" onclick="document.getElementById('actDetailModal').remove()">✕</button></div><div class="modal-body" style="max-height:70vh;overflow-y:auto;">`+
+    `<p style="font-size:12px;color:var(--text-muted);margin-bottom:14px;">编辑以下内容会同步更新到前台报名页面 👉 <a href="/register/${act.id}" target="_blank" style="color:var(--gold-dark);">预览报名页</a></p>`+
+
+    `<div class="form-group"><label>活动描述 <span style="font-weight:400;color:var(--text-muted);font-size:11px;">（报名页顶部文案）</span></label>`+
+    `<textarea id="df_desc" rows="3" style="width:100%;padding:10px 14px;border:1px solid #e2e6ed;border-radius:8px;font-size:14px;outline:none;resize:vertical;">${esc(act.desc_text||'')}</textarea></div>`+
+
+    `<div class="form-group"><label>亮点/引导语 <span style="font-weight:400;color:var(--text-muted);font-size:11px;">（金色背景框）</span></label>`+
+    `<textarea id="df_highlight" rows="3" style="width:100%;padding:10px 14px;border:1px solid #e2e6ed;border-radius:8px;font-size:14px;outline:none;resize:vertical;">${esc(act.highlight_text||'')}</textarea></div>`+
+
+    `<div class="form-group"><label>标签 <span style="font-weight:400;color:var(--text-muted);font-size:11px;">（逗号分隔）</span></label>`+
+    `<input id="df_tags" value="${esc(act.tags||'')}" style="width:100%;padding:10px 14px;border:1px solid #e2e6ed;border-radius:8px;font-size:14px;outline:none;"></div>`+
+
+    `<div class="form-group"><label>嘉宾介绍</label>`+
+    `<input id="df_guest" value="${esc(act.guest_desc||'')}" style="width:100%;padding:10px 14px;border:1px solid #e2e6ed;border-radius:8px;font-size:14px;outline:none;"></div>`+
+
+    `<div class="form-group"><label style="display:flex;align-items:center;gap:8px;">📋 活动流程 <button class="btn btn-sm btn-primary" onclick="addFlowRow()" style="font-size:11px;">＋ 添加环节</button></label>`+
+    `<div id="flowList" style="margin-top:6px;"></div></div>`+
+
+    `</div><div class="modal-foot">`+
+    `<button class="btn btn-ghost" onclick="document.getElementById('actDetailModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="saveActivityDetail(${id})">💾 保存详情</button></div></div></div>`);
+
+  // 加载流程
+  let flow = [];
+  try { flow = JSON.parse(act.flow_json||'[]'); } catch(e) {}
+  flow.forEach(item => addFlowRow(item.time, item.title, item.desc));
+  if (!flow.length) addFlowRow('', '', '');
+}
+
+function addFlowRow(time, title, desc) {
+  const idx = detailFlowRows.length;
+  detailFlowRows.push({time: time||'', title: title||'', desc: desc||''});
+  const div = document.createElement('div');
+  div.id = 'flowRow_'+idx;
+  div.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;';
+  div.innerHTML =
+    `<input id="ft_${idx}" value="${esc(time||'')}" placeholder="时间（如 14:00）" style="width:60px;padding:6px 8px;border:1px solid #e2e6ed;border-radius:6px;font-size:12px;outline:none;">`+
+    `<input id="ff_${idx}" value="${esc(title||'')}" placeholder="环节名称" style="flex:1;padding:6px 8px;border:1px solid #e2e6ed;border-radius:6px;font-size:12px;outline:none;">`+
+    `<input id="fd_${idx}" value="${esc(desc||'')}" placeholder="说明（可选）" style="flex:1.5;padding:6px 8px;border:1px solid #e2e6ed;border-radius:6px;font-size:12px;outline:none;">`+
+    `<button onclick="removeFlowRow(${idx})" style="background:none;border:none;color:#d94a4a;cursor:pointer;font-size:16px;padding:2px;">✕</button>`;
+  document.getElementById('flowList').appendChild(div);
+}
+
+function removeFlowRow(idx) {
+  const el = document.getElementById('flowRow_'+idx);
+  if (el) el.remove();
+  detailFlowRows[idx] = null;
+}
+
+function collectFlowData() {
+  const items = [];
+  for (let i = 0; i < detailFlowRows.length; i++) {
+    if (!detailFlowRows[i]) continue;
+    const time = document.getElementById('ft_'+i)?.value?.trim() || '';
+    const title = document.getElementById('ff_'+i)?.value?.trim() || '';
+    if (!title) continue; // 跳过空行
+    items.push({time, title, desc: document.getElementById('fd_'+i)?.value?.trim() || ''});
+  }
+  return items;
+}
+
+async function saveActivityDetail(id) {
+  const data = {
+    desc_text: document.getElementById('df_desc').value,
+    highlight_text: document.getElementById('df_highlight').value,
+    tags: document.getElementById('df_tags').value,
+    guest_desc: document.getElementById('df_guest').value,
+    flow_json: JSON.stringify(collectFlowData())
+  };
+  try {
+    await api('/api/activities/'+id, { method:'PUT', body:JSON.stringify(data) });
+    document.getElementById('actDetailModal').remove();
+    showToast('success','✅ 报名页详情已更新');
+    filterActivities();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function publishActivity(id) {
+  try {
+    await api('/api/activities/'+id+'/publish', { method:'POST' });
+    showToast('success','✅ 活动已发布，任务已自动生成');
+    filterActivities();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function deleteActivity(id) {
+  if(!confirm('确定删除此活动？')) return;
+  try {
+    await api('/api/activities/'+id, { method:'DELETE' });
+    showToast('success','已删除');
+    filterActivities();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function viewActivity(id) {
+  try {
+    const a = await api('/api/activities/'+id);
+    const regs = await api('/api/registrations?activity_id='+id);
+    const paid = regs.filter(r=>r.payment_status==='paid').length;
+    const checked = regs.filter(r=>r.checkin_status==='checked').length;
+    const statusMap = {draft:'草稿',published:'报名中',ongoing:'进行中',ended:'已结束'};
+    document.body.insertAdjacentHTML('beforeend',
+      `<div class="modal-overlay active" id="viewActModal"><div class="modal" style="max-width:600px;"><div class="modal-head"><h3>${esc(a.name)}</h3><button class="modal-close" onclick="document.getElementById('viewActModal').remove()">✕</button></div><div class="modal-body">`+
+      `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;">`+
+      `<div><strong>状态：</strong><span class="tag ${a.status==='ended'?'tag-green':a.status==='published'?'tag-blue':'tag-gray'}">${statusMap[a.status]||a.status}</span></div>`+
+      `<div><strong>主题：</strong>${esc(a.theme||'-')}</div>`+
+      `<div><strong>日期：</strong>${a.date||'-'}</div><div><strong>时间：</strong>${a.time||'-'}</div>`+
+      `<div><strong>地点：</strong>${esc(a.venue||'-')}</div><div><strong>嘉宾：</strong>${esc(a.guest_desc||'-')}</div>`+
+      `<div><strong>票价：</strong>${a.ticket_price?`¥${a.ticket_price}`:'免费'}</div>`+
+      `<div><strong>限额：</strong>${a.max_participants||30}人</div>`+
+      `<div><strong>报名人数：</strong>${regs.length}人</div>`+
+      `<div><strong>已付款：</strong>${paid}人</div>`+
+      `<div><strong>已签到：</strong>${checked}人</div>`+
+      `<div><strong>到场率：</strong>${regs.length?Math.round(checked/regs.length*100):0}%</div>`+
+      `</div>`+
+      (a.desc_text?`<div style="margin-top:10px;padding:10px;background:var(--gold-bg);border-radius:6px;font-size:13px;">${esc(a.desc_text)}</div>`:'')+
+      (regs.length?`<h4 style="margin-top:12px;font-size:13px;">📋 报名名单（${regs.length}人）</h4><div style="max-height:150px;overflow-y:auto;font-size:12px;color:var(--text-light);">`+
+        regs.map(r=>`<div style="padding:2px 0;">${esc(r.name)} · ${esc(r.phone)} ${r.payment_status==='paid'?'✅已付款':'○未付款'} ${r.checkin_status==='checked'?'✅已签到':'○未签到'}</div>`).join('')+'</div>':'')+
+      `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('viewActModal').remove()">关闭</button></div></div></div>`);
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: TASK BOARD
+// ─────────────────────────────────────────────────────────────────
+async function load_taskboard() {
+  const html = '<div class="page-header"><div><h2>任务看板</h2><p class="subtitle">各活动任务清单，拖拽式管理</p></div><div class="page-header-right"><select id="tActSelector" class="filter-btn" style="padding:5px 10px;" onchange="loadTasks()"></select><button class="btn btn-primary" onclick="showAddTask()">＋ 添加任务</button></div></div>' +
+    '<div id="taskBoard"><div class="state-loading"><div class="spinner"></div><p>加载中…</p></div></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  try {
+    const acts = await api('/api/activities');
+    const sel = document.getElementById('tActSelector');
+    acts.forEach(a => { sel.innerHTML += `<option value="${a.id}">${esc(a.name)}</option>`; });
+    // 如果有来自总览的预选活动，选中它
+    if (pendingTaskboardActivity && [...sel.options].some(o => Number(o.value) === pendingTaskboardActivity)) {
+      sel.value = pendingTaskboardActivity;
+      pendingTaskboardActivity = null;
+    }
+    currentActivity = Number(sel.value);
+    if(currentActivity) loadTasks();
+  } catch(e) { showToast('error', '加载失败'); }
+}
+
+async function loadTasks() {
+  currentActivity = document.getElementById('tActSelector')?.value || currentActivity;
+  if(!currentActivity) return;
+  try {
+    const tasks = await api('/api/activities/'+currentActivity+'/tasks');
+    const phases = ['策划期','准备期','推广期','执行期','收尾期','复盘期'];
+    const grouped = {};
+    phases.forEach(p => grouped[p] = []);
+    tasks.forEach(t => { if(grouped[t.phase]) grouped[t.phase].push(t); });
+    const board = document.getElementById('taskBoard');
+    board.innerHTML = '<div class="kanban-row">' + phases.map(p =>
+      `<div class="kanban-col"><div class="kanban-col-head">${p} <span class="count">${grouped[p].length}</span></div><div class="kanban-col-body">` +
+      (grouped[p].length ? grouped[p].map(t => {
+        const overdue = t.due_date && t.due_date < new Date().toISOString().slice(0,10) && t.status!='done';
+        return `<div class="kanban-card${overdue?' overdue':''}"><div class="title">${esc(t.name)}</div>` +
+          `<div class="meta"><span class="assignee">${esc(t.assignee||'未分配')}</span>` +
+          `<select onchange="updateTask(${t.id},this.value)" style="font-size:10px;border:1px solid var(--border);border-radius:4px;">` +
+          `<option value="todo" ${t.status==='todo'?'selected':''}>待办</option><option value="in_progress" ${t.status==='in_progress'?'selected':''}>进行中</option><option value="done" ${t.status==='done'?'selected':''}>✅完成</option>` +
+          `</select></div>${t.due_date?`<div style="font-size:10px;color:var(--text-light);margin-top:2px;">截止: ${t.due_date}</div>`:''}</div>`;
+      }).join('') : '<div style="color:var(--text-light);font-size:11px;text-align:center;padding:12px;">暂无任务</div>') +
+      `</div></div>`
+    ).join('') + '</div>';
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function updateTask(id, status) {
+  try {
+    await api('/api/tasks/'+id, { method:'PUT', body:JSON.stringify({status}) });
+    loadTasks();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function showAddTask() {
+  if(!currentActivity) { showToast('error','请先选择一个活动'); return; }
+  const phases = ['策划期','准备期','推广期','执行期','收尾期','复盘期'];
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="taskModal"><div class="modal"><div class="modal-head"><h3>添加任务</h3><button class="modal-close" onclick="document.getElementById('taskModal').remove()">✕</button></div><div class="modal-body">`+
+    `<div class="form-group"><label>任务阶段 <span class="required" style="color:var(--red)">*</span></label>`+
+    `<select id="tf_phase">`+phases.map(p=>`<option value="${p}">${p}</option>`).join('')+`</select></div>`+
+    `<div class="form-group"><label>任务内容 <span class="required" style="color:var(--red)">*</span></label>`+
+    `<input id="tf_name" placeholder="请输入任务名称" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>`+
+    `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('taskModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="saveTask()">添加</button></div></div></div>`);
+  setTimeout(()=>document.getElementById('tf_name').focus(), 100);
+}
+
+async function saveTask() {
+  const name = document.getElementById('tf_name').value.trim();
+  const phase = document.getElementById('tf_phase').value;
+  if(!name) { showToast('error','请输入任务名称'); return; }
+  try {
+    await api('/api/tasks', { method:'POST', body:JSON.stringify({activity_id:parseInt(currentActivity), name, phase}) });
+    document.getElementById('taskModal').remove();
+    showToast('success','✅ 任务已添加');
+    loadTasks();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: TEMPLATES
+// ─────────────────────────────────────────────────────────────────
+async function load_templates() {
+  const html = '<div class="page-header"><div><h2>物料模板库</h2><p class="subtitle">管理所有活动物料模板</p></div><div class="page-header-right"><button class="btn btn-primary" onclick="showTemplateModal()">＋ 新建模板</button></div></div>' +
+    '<div class="table-wrap"><table><thead><tr><th>模板名称</th><th>分类</th><th>版本</th><th>最后修改</th><th>操作</th></tr></thead><tbody id="tmplList"></tbody></table></div>' +
+    // Past salon materials section
+    '<div style="margin-top:18px;"><h3 style="font-size:14px;font-weight:600;margin-bottom:8px;color:var(--navy);">📋 往期沙龙物料（含真实数据）</h3>' +
+    '<div class="table-wrap"><table><thead><tr><th>物料名称</th><th>期数</th><th>内容说明</th><th>操作</th></tr></thead><tbody>' +
+    '<tr><td><strong>📋 签到表</strong></td><td><span class="tag tag-blue">第一期</span></td><td style="color:var(--text-light)">7月5日 · 职场饭局文化 · 17人名单</td><td><a class="btn btn-sm btn-outline" href="/api/templates/excel/past/checkin1" download>下载Excel</a></td></tr>' +
+    '<tr><td><strong>📋 签到表</strong></td><td><span class="tag tag-orange">第二期</span></td><td style="color:var(--text-light)">7月19日 · 职场谈钱实验 · 10人名单</td><td><a class="btn btn-sm btn-outline" href="/api/templates/excel/past/checkin2" download>下载Excel</a></td></tr>' +
+    '<tr><td><strong>📋 活动流程</strong></td><td><span class="tag tag-blue">第一期</span></td><td style="color:var(--text-light)">7月5日 · Jacky主题分享 · 7个环节</td><td><a class="btn btn-sm btn-outline" href="/api/templates/excel/past/flow1" download>下载Excel</a></td></tr>' +
+    '<tr><td><strong>📋 活动流程</strong></td><td><span class="tag tag-orange">第二期</span></td><td style="color:var(--text-light)">7月19日 · 四大职场谈钱实验 · 8个环节</td><td><a class="btn btn-sm btn-outline" href="/api/templates/excel/past/flow2" download>下载Excel</a></td></tr>' +
+    '</tbody></table></div></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  try {
+    const ts = await api('/api/templates');
+    const tbody = document.getElementById('tmplList');
+    if(!ts.length) { tbody.innerHTML = '<tr><td colspan="5"><div class="state-empty"><p>还没有模板</p></div></td></tr>'; return; }
+    tbody.innerHTML = ts.map(t =>
+      `<tr><td><strong>${esc(t.name)}</strong></td><td><span class="tag tag-blue">${esc(t.type)}</span></td><td>v${t.current_version}</td><td>${t.updated_at||t.created_at}</td>`+
+      `<td><button class="btn btn-sm btn-outline" onclick="editTemplate(${t.id})">编辑</button></td></tr>`
+    ).join('');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function showTemplateModal(t) {
+  const isEdit = !!t;
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="tmplModal"><div class="modal"><div class="modal-head"><h3>${isEdit?'编辑模板':'新建模板'}</h3><button class="modal-close" onclick="document.getElementById('tmplModal').remove()">✕</button></div><div class="modal-body">`+
+    `<div class="form-group"><label>模板名称</label><input id="tf_name" value="${esc(t?.name||'')}"></div>`+
+    `<div class="form-group"><label>分类</label><select id="tf_type"><option value="海报文案" ${t?.type==='海报文案'?'selected':''}>海报文案</option><option value="邀约话术" ${t?.type==='邀约话术'?'selected':''}>邀约话术</option><option value="签到表" ${t?.type==='签到表'?'selected':''}>签到表</option><option value="文档" ${t?.type==='文档'?'selected':''}>文档</option></select></div>`+
+    `<div class="form-group"><label>内容</label><textarea id="tf_content" rows="6">${esc(t?.content||'')}</textarea></div></div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('tmplModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="${isEdit?`saveTemplate(${t.id})`:'createTemplate()'}">保存</button></div></div></div>`);
+}
+
+async function createTemplate() {
+  try {
+    await api('/api/templates', { method:'POST', body:JSON.stringify({name:tf_name.value, type:tf_type.value, content:tf_content.value}) });
+    document.getElementById('tmplModal').remove();
+    showToast('success','✅ 模板已创建');
+    load_templates();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function editTemplate(id) {
+  try {
+    const resp = await fetch('/api/templates');
+    const all = await resp.json();
+    const t = all.find(t => t.id === id);
+    if (!t) { showToast('error', '模板不存在'); return; }
+    if (t.name.includes('签到表')) {
+      showCheckinEditor(t);
+      return;
+    }
+    if (t.name.includes('流程')) {
+      showFlowEditor(t);
+      return;
+    }
+    showTemplateModal(t);
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function saveTemplate(id) {
+  try {
+    await api('/api/templates/'+id, { method:'PUT', body:JSON.stringify({content:tf_content.value}) });
+    document.getElementById('tmplModal').remove();
+    showToast('success','模板已更新');
+    load_templates();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ── 签到表可编辑表格（支持动态列） ──
+function showCheckinEditor(t) {
+  let data = { columns: ['姓名', '签到状态', '备注'], rows: [] };
+  try {
+    const parsed = JSON.parse(t.content);
+    if (Array.isArray(parsed)) {
+      // 旧格式 [['name','status','note'], ...] → 转为新格式
+      data.rows = parsed;
+    } else if (parsed.columns && parsed.rows) {
+      data = parsed;
+    }
+  } catch(e) {}
+  if (!data.rows.length) data.rows = [['', '', '']];
+  renderCheckinEditor(t.id, data);
+}
+
+function renderCheckinEditor(tid, data) {
+  const modalId = 'checkinEditor_' + tid;
+  const existing = document.getElementById(modalId);
+  if (existing) existing.remove();
+  const div = document.createElement('div');
+  div.className = 'modal-overlay active';
+  div.id = modalId;
+  div.innerHTML = `<div class="modal" style="max-width:800px;"><div class="modal-head"><h3>签到表编辑</h3><button class="modal-close" onclick="this.closest('.modal-overlay').remove()">x</button></div>
+    <div class="modal-body">
+      <div style="text-align:right;margin-bottom:8px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-outline" onclick="addCheckinRow('${modalId}')">+ 添加一行</button>
+        <button class="btn btn-sm btn-outline" onclick="addCheckinColumn('${modalId}')">+ 添加一列</button>
+        <button class="btn btn-sm btn-outline" onclick="importCheckinExcel('${modalId}')">上传Excel</button>
+      </div>
+      <div class="table-wrap" style="max-height:400px;overflow-y:auto;">
+      <table><thead><tr id="${modalId}_header"></tr></thead>
+      <tbody id="${modalId}_tbody"></tbody></table></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('${modalId}').remove()">取消</button>
+      <button class="btn btn-primary" onclick="saveCheckinTemplate('${modalId}',${tid})">保存模板</button>
+    </div></div>`;
+  document.body.appendChild(div);
+  // 存数据
+  div._checkinData = data;
+  renderCheckinHeader(modalId, data.columns);
+  renderCheckinBody(modalId, data);
+}
+
+function renderCheckinHeader(mid, columns) {
+  const tr = document.getElementById(mid + '_header');
+  tr.innerHTML = columns.map((col, i) => {
+    // 前三列（姓名/签到状态/备注）不可删除，自定义列可删除
+    const isFixed = i < 3;
+    const delBtn = isFixed ? '' : `<span class="col-del" onclick="removeCheckinColumn('${mid}',${i})" style="cursor:pointer;color:var(--red);margin-left:4px;font-size:14px;" title="删除此列">×</span>`;
+    return `<th style="position:relative;min-width:100px;">${isFixed ? esc(col) : '<input class="ci-col-name" value="'+esc(col)+'" style="width:70px;padding:2px 4px;border:1px solid var(--border);border-radius:3px;font-size:11px;text-align:center;">'}${delBtn}</th>`;
+  }).join('');
+}
+
+function renderCheckinBody(mid, data) {
+  const tbody = document.getElementById(mid + '_tbody');
+  tbody.innerHTML = data.rows.map((r, i) => renderCheckinRow(mid, i, r, data.columns)).join('');
+}
+
+function renderCheckinRow(mid, idx, row, columns) {
+  const cols = columns || ['姓名', '签到状态', '备注'];
+  // 确保 row 长度与 columns 匹配
+  while (row.length < cols.length) row.push('');
+  return `<tr>
+    ${cols.map((col, ci) => {
+      const val = row[ci] || '';
+      if (ci === 1) {
+        // 签到状态列 → select
+        return `<td><select class="ci-cell" data-ci="${ci}" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;">
+          <option value="">未签到</option><option value="checked" ${val==='checked'?'selected':''}>已签到</option>
+        </select></td>`;
+      }
+      // 其他列 → input
+      const placeholder = ci === 0 ? '姓名' : (ci === 2 ? '备注' : '');
+      return `<td><input class="ci-cell" data-ci="${ci}" value="${esc(val)}" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="${placeholder}"></td>`;
+    }).join('')}
+    <td style="width:50px"><button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="this.closest('tr').remove()">×</button></td>
+  </tr>`;
+}
+
+function addCheckinRow(mid) {
+  const div = document.getElementById(mid);
+  if (!div) return;
+  const data = div._checkinData;
+  data.rows.push(new Array(data.columns.length).fill(''));
+  renderCheckinBody(mid, data);
+}
+
+function addCheckinColumn(mid) {
+  const name = prompt('请输入新列名称：');
+  if (!name || !name.trim()) return;
+  const div = document.getElementById(mid);
+  if (!div) return;
+  const data = div._checkinData;
+  data.columns.push(name.trim());
+  data.rows.forEach(r => r.push(''));
+  renderCheckinHeader(mid, data.columns);
+  renderCheckinBody(mid, data);
+}
+
+function removeCheckinColumn(mid, colIdx) {
+  if (colIdx < 3) return; // 前三列不可删除
+  if (!confirm('确定删除此列？所有行的该列数据将丢失。')) return;
+  const div = document.getElementById(mid);
+  if (!div) return;
+  const data = div._checkinData;
+  data.columns.splice(colIdx, 1);
+  data.rows.forEach(r => r.splice(colIdx, 1));
+  renderCheckinHeader(mid, data.columns);
+  renderCheckinBody(mid, data);
+}
+
+function importCheckinExcel(mid) {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.xlsx,.xls,.csv';
+  input.onchange = async function(e) {
+    const file = e.target.files[0]; if(!file) return;
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const resp = await fetch('/api/templates/upload-excel', { method:'POST', body:fd });
+      const data = await resp.json();
+      if(data.rows && data.rows.length) {
+        const div = document.getElementById(mid);
+        if (!div) return;
+        // 从导入数据推断列数
+        const maxLen = Math.max(...data.rows.map(r => r.length));
+        // 确保至少有3列
+        const colCount = Math.max(3, maxLen);
+        // 补全自定义列名
+        const dc = div._checkinData;
+        while (dc.columns.length < colCount) {
+          dc.columns.push('列' + (dc.columns.length + 1));
+        }
+        dc.rows = data.rows.map(r => {
+          const row = [...r];
+          while (row.length < colCount) row.push('');
+          return row;
+        });
+        renderCheckinHeader(mid, dc.columns);
+        renderCheckinBody(mid, dc);
+        showToast('success', '导入了 '+data.rows.length+' 条数据');
+      } else showToast('error', '未读取到数据');
+    } catch(e) { showToast('error', '导入失败'); }
+  };
+  input.click();
+}
+
+function saveCheckinTemplate(mid, tid) {
+  const div = document.getElementById(mid);
+  if (!div) return;
+  const data = div._checkinData;
+  // 从表头读取自定义列名
+  const headerInputs = div.querySelectorAll('.ci-col-name');
+  headerInputs.forEach((inp, i) => {
+    const idx = 3 + i; // 自定义列从索引3开始
+    if (data.columns[idx]) data.columns[idx] = inp.value.trim() || data.columns[idx];
+  });
+  // 收集每行数据
+  const tbody = document.getElementById(mid + '_tbody');
+  const rows = [];
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const cells = tr.querySelectorAll('.ci-cell');
+    const row = [];
+    cells.forEach(c => row.push(c.value || ''));
+    rows.push(row);
+  });
+  data.rows = rows;
+  // 保存
+  try {
+    api('/api/templates/'+tid, { method:'PUT', body:JSON.stringify({content:JSON.stringify(data)}) }).then(() => {
+      div.remove();
+      showToast('success', '签到表已保存');
+      load_templates();
+    }).catch(e => showToast('error', String(e)));
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ── 活动流程可编辑表格 ──
+function showFlowEditor(t) {
+  let rows = [];
+  try { const parsed = JSON.parse(t.content); if(Array.isArray(parsed)) rows = parsed; } catch(e) {}
+  if(!rows.length) { rows = [['', '', '', '']]; }
+  renderFlowEditor(t.id, rows);
+}
+
+function renderFlowEditor(tid, rows) {
+  const modalId = 'flowEditor_' + tid;
+  const existing = document.getElementById(modalId);
+  if(existing) existing.remove();
+  const div = document.createElement('div');
+  div.className = 'modal-overlay active';
+  div.id = modalId;
+  div.innerHTML = `<div class="modal" style="max-width:750px;"><div class="modal-head">
+    <h3>活动流程编辑</h3>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-sm btn-outline" onclick="importFlowExcel('${modalId}')">上传Excel</button>
+      <button class="modal-close" onclick="this.closest('.modal-overlay').remove()">x</button>
+    </div>
+  </div>
+    <div class="modal-body">
+      <div style="text-align:left;margin-bottom:8px;">
+        <button class="btn btn-sm btn-outline" onclick="addFlowRow('${modalId}')">+ 添加一行</button>
+      </div>
+      <div class="table-wrap" style="max-height:450px;overflow-y:auto;">
+      <table><thead><tr><th>时间</th><th>环节名称</th><th>内容说明</th><th>负责人</th><th style="width:50px">操作</th></tr></thead>
+      <tbody id="${modalId}_tbody">${rows.map((r,i) => renderFlowRow(modalId, i, r)).join('')}</tbody></table></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" onclick="document.getElementById('${modalId}').remove()">取消</button>
+      <button class="btn btn-primary" onclick="saveFlowTemplate('${modalId}',${tid})">保存模板</button>
+    </div></div>`;
+  document.body.appendChild(div);
+}
+
+function renderFlowRow(mid, idx, row) {
+  const time = row[0]||'', title = row[1]||'', desc = row[2]||'', owner = row[3]||'';
+  return `<tr>
+    <td><input class="fl-time" value="${esc(time)}" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="例: 14:00-14:30"></td>
+    <td><input class="fl-title" value="${esc(title)}" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="环节名称"></td>
+    <td><input class="fl-desc" value="${esc(desc)}" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="说明"></td>
+    <td><input class="fl-owner" value="${esc(owner)}" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="负责人"></td>
+    <td><button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="this.closest('tr').remove()">x</button></td>
+  </tr>`;
+}
+
+function addFlowRow(mid) {
+  const tbody = document.getElementById(mid + '_tbody');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input class="fl-time" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="例: 14:00-14:30"></td>
+    <td><input class="fl-title" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="环节名称"></td>
+    <td><input class="fl-desc" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="说明"></td>
+    <td><input class="fl-owner" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;" placeholder="负责人"></td>
+    <td><button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="this.closest('tr').remove()">x</button></td>`;
+  tbody.appendChild(tr);
+}
+
+function importFlowExcel(mid) {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.xlsx,.xls,.csv';
+  input.onchange = async function(e) {
+    const file = e.target.files[0]; if(!file) return;
+    const fd = new FormData(); fd.append('file', file);
+    try {
+      const resp = await fetch('/api/templates/upload-excel', { method:'POST', body:fd });
+      const data = await resp.json();
+      if(data.rows && data.rows.length) {
+        const tbody = document.getElementById(mid + '_tbody');
+        tbody.innerHTML = '';
+        data.rows.forEach((r,i) => {
+          const tr = document.createElement('tr');
+          tr.innerHTML = renderFlowRow(mid, i, [r[0]||'', r[1]||'', r[2]||'', r[3]||'']);
+          tbody.appendChild(tr);
+        });
+        showToast('success', '导入了 '+data.rows.length+' 条流程');
+      } else showToast('error', '未读取到数据');
+    } catch(e) { showToast('error', '导入失败'); }
+  };
+  input.click();
+}
+
+async function saveFlowTemplate(mid, tid) {
+  const tbody = document.getElementById(mid + '_tbody');
+  const rows = [];
+  tbody.querySelectorAll('tr').forEach(tr => {
+    const time = tr.querySelector('.fl-time')?.value?.trim() || '';
+    const title = tr.querySelector('.fl-title')?.value?.trim() || '';
+    const desc = tr.querySelector('.fl-desc')?.value?.trim() || '';
+    const owner = tr.querySelector('.fl-owner')?.value?.trim() || '';
+    rows.push([time, title, desc, owner]);
+  });
+  try {
+    await api('/api/templates/'+tid, { method:'PUT', body:JSON.stringify({content:JSON.stringify(rows)}) });
+    document.getElementById(mid).remove();
+    showToast('success', '活动流程已保存');
+    load_templates();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: REGISTRATION
+// ─────────────────────────────────────────────────────────────────
+async function load_registration() {
+  const html = '<div class="page-header"><div><h2>报名管理</h2><p class="subtitle">查看和管理活动报名，可一键导出Excel</p></div><div class="page-header-right">' +
+    `<button class="btn btn-outline btn-sm" onclick="copyLink()">复制报名链接</button>` +
+    `<button class="btn btn-outline btn-sm" onclick="exportRegistrations()">导出 Excel</button></div></div>` +
+    '<div class="stats-row" id="regStats"></div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">' +
+    '<select id="regActFilter" class="filter-btn" style="padding:5px 10px;" onchange="regUpdateLink(); loadRegistrations();"></select>' +
+    '<input type="text" id="regSearch" placeholder="搜索姓名或手机号…" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;flex:1;max-width:220px;" oninput="loadRegistrations()"></div>' +
+    '<div id="regLinkBar" style="margin-bottom:12px;font-size:12px;color:var(--gold-dark);background:var(--gold-bg);padding:6px 12px;border-radius:6px;display:none;"></div>' +
+    '<div class="table-wrap"><table><thead><tr><th>姓名</th><th>手机号</th><th>来源渠道</th><th>报名时间</th><th>付款状态</th><th>签到状态</th><th>操作</th></tr></thead><tbody id="regList"></tbody></table></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  try {
+    const acts = await api('/api/activities');
+    const sel = document.getElementById('regActFilter');
+    sel.innerHTML = '<option value="">全部活动</option>';
+    acts.forEach(a => { sel.innerHTML += `<option value="${a.id}" ${!sel.value&&a.status==='published'?'selected':''}>${esc(a.name)}</option>`; });
+    regUpdateLink();
+    loadRegistrations();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function regUpdateLink() {
+  const sel = document.getElementById('regActFilter');
+  const bar = document.getElementById('regLinkBar');
+  if (sel && sel.value) {
+    const link = 'http://{{ lan_ip }}:5000/register/' + sel.value;
+    bar.innerHTML = '📋 分享给参与者报名：<a href="' + link + '" target="_blank" style="color:var(--gold-dark);font-weight:600;">' + link + '</a> <span style="color:var(--text-light);font-size:11px;">（同局域网可打开）</span>';
+    bar.style.display = 'block';
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+async function loadRegistrations() {
+  const aid = document.getElementById('regActFilter')?.value;
+  const search = document.getElementById('regSearch')?.value;
+  let url = '/api/registrations';
+  const params = [];
+  if(aid) params.push('activity_id='+aid);
+  if(search) params.push('search='+encodeURIComponent(search));
+  if(params.length) url += '?'+params.join('&');
+  try {
+    const regs = await api(url);
+    const tbody = document.getElementById('regList');
+    if(!tbody) return;
+    // 统计
+    const stats = document.getElementById('regStats');
+    const total = regs.length;
+    const paid = regs.filter(r=>r.payment_status==='paid').length;
+    const checked = regs.filter(r=>r.checkin_status==='checked').length;
+    const rate = total ? Math.round(checked/total*100) : 0;
+    stats.innerHTML =
+      `<div class="stat-card accent-gold"><div class="label">总报名数</div><div class="value">${total}</div></div>` +
+      `<div class="stat-card accent-green"><div class="label">已付款</div><div class="value">${paid}</div><div class="change up">${total?Math.round(paid/total*100):0}%</div></div>` +
+      `<div class="stat-card accent-blue"><div class="label">已签到</div><div class="value">${checked}</div><div class="change">${rate}%</div></div>` +
+      `<div class="stat-card"><div class="label">到场率</div><div class="value">${rate}%</div></div>`;
+    if(!regs.length) { tbody.innerHTML = '<tr><td colspan="8"><div class="state-empty"><p>暂无报名记录</p></div></td></tr>'; return; }
+    tbody.innerHTML = regs.map(r =>
+      `<tr><td><strong>${esc(r.name)}</strong></td><td>${esc(r.phone)}</td><td>${esc(r.source_channel||'-')}</td><td>${r.created_at}</td>`+
+      `<td><select class="reg-pay-select" data-id="${r.id}" onchange="updatePayment(${r.id},this.value)" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;background:${r.payment_status==='paid'?'var(--green-bg)':'var(--orange-bg)'}">`+
+      `<option value="unpaid" ${r.payment_status==='unpaid'?'selected':''}>未付款</option>`+
+      `<option value="paid" ${r.payment_status==='paid'?'selected':''}>✅ 已付款</option></select></td>`+
+      `<td><select class="reg-ci-select" data-id="${r.id}" onchange="updateCheckin(${r.id},this.value)" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;background:${r.checkin_status==='checked'?'var(--green-bg)':'var(--bg)'}">`+
+      `<option value="unchecked" ${r.checkin_status==='unchecked'?'selected':''}>未签到</option>`+
+      `<option value="checked" ${r.checkin_status==='checked'?'selected':''}>✅ 已签到</option></select></td>`+
+      `<td><button class="btn btn-sm btn-outline" onclick="editRegistration(${r.id})">编辑</button> `+
+      `<button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteRegistration(${r.id})">删除</button></td></tr>`
+    ).join('');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function updatePayment(id, status) {
+  try {
+    await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({payment_status:status}) });
+    showToast('success', status==='paid'?'✅ 已标记付款':'已标记未付款');
+    loadRegistrations();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function updateCheckin(id, status) {
+  try {
+    await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({checkin_status:status}) });
+    showToast('success', status==='checked'?'✅ 已签到':'已取消签到');
+    loadRegistrations();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function openRegisterPage() {
+  const sel = document.getElementById('regActFilter');
+  if (sel && sel.value) {
+    window.open('/register/' + sel.value, '_blank');
+  } else {
+    // 当前不在报名管理页面，从API获取最新活动
+    api('/api/activities').then(acts => {
+      if (acts && acts.length) {
+        // 优先选报名中的活动，没有则选最新的
+        const pub = acts.find(a => a.status === 'published');
+        const aid = pub ? pub.id : acts[acts.length - 1].id;
+        window.open('/register/' + aid, '_blank');
+      } else {
+        showToast('error', '暂无可用活动');
+      }
+    }).catch(() => showToast('error', '获取活动列表失败'));
+  }
+}
+
+function copyLink() {
+  const sel = document.getElementById('regActFilter');
+  if(!sel || !sel.value) { showToast('error','请先选择一个活动'); return; }
+  // 用服务器IP，让局域网的其他人也能打开
+  const base = window.location.protocol + '//{{ lan_ip }}:5000';
+  const link = base + '/register/' + sel.value;
+  navigator.clipboard.writeText(link)
+    .then(() => showToast('success','📋 已复制: ' + link))
+    .catch(() => showToast('success','📋 链接: ' + link));
+}
+
+function exportRegistrations() {
+  const sel = document.getElementById('regActFilter');
+  if(!sel || !sel.value) { showToast('error','请先选择一个活动'); return; }
+  window.open('/api/registrations/export/' + sel.value, '_blank');
+  showToast('success','📊 正在下载报名表Excel');
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: CHECK-IN
+// ─────────────────────────────────────────────────────────────────
+function goCheckin(id) {
+  currentActivity = id;
+  goPage('checkin', document.querySelector('.sidebar-nav a:nth-child(6)'));
+}
+
+async function load_checkin() {
+  const html = '<div class="page-header"><div><h2>签到管理</h2><p class="subtitle">快速签到模式</p></div><div class="page-header-right">' +
+    '<select id="ciActFilter" class="filter-btn" style="padding:5px 10px;" onchange="loadCheckinList()"></select>' +
+    '<span style="font-size:13px;color:var(--text-light);margin-left:8px;">到场 <strong id="ciCount">0</strong> 人</span></div></div>' +
+    '<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;">' +
+    '<input type="text" id="ciSearch" placeholder="搜索姓名…" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;max-width:220px;" oninput="loadCheckinList()">' +
+    '<button class="btn btn-sm btn-outline" onclick="batchCheckin()">✓ 批量签到</button>' +
+    '<button class="btn btn-sm btn-danger" onclick="batchUncheck()">↩ 批量取消签到</button></div>' +
+    '<div class="table-wrap"><table><thead><tr><th style="width:30px"><input type="checkbox" id="ciCheckAll" onchange="toggleAllCheckin(this)"></th><th>姓名</th><th>手机号（后4位）</th><th>来源</th><th>签到状态</th><th>操作</th><th>删除</th></tr></thead><tbody id="ciList"></tbody></table></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  try {
+    const acts = await api('/api/activities');
+    const sel = document.getElementById('ciActFilter');
+    sel.innerHTML = '';
+    acts.forEach(a => { sel.innerHTML += `<option value="${a.id}" ${a.id==(currentActivity||a.id)?'selected':''}>${esc(a.name)}</option>`; });
+    loadCheckinList();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function loadCheckinList() {
+  const aid = document.getElementById('ciActFilter')?.value;
+  const search = document.getElementById('ciSearch')?.value;
+  if(!aid) return;
+  let url = '/api/registrations?activity_id='+aid;
+  if(search) url += '&search='+encodeURIComponent(search);
+  try {
+    const regs = await api(url);
+    const tbody = document.getElementById('ciList');
+    const checked = regs.filter(r=>r.checkin_status==='checked').length;
+    document.getElementById('ciCount').textContent = checked;
+    if(!regs.length) { tbody.innerHTML = '<tr><td colspan="7"><div class="state-empty"><p>暂无报名者</p></div></td></tr>'; return; }
+    tbody.innerHTML = regs.map(r =>
+      `<tr><td><input type="checkbox" class="ci-checkbox" value="${r.id}"></td>`+
+      `<td><strong>${esc(r.name)}</strong></td><td>${esc(r.phone.slice(-4))}</td><td>${esc(r.source_channel||'-')}</td>`+
+      `<td><span class="tag ${r.checkin_status==='checked'?'tag-green':'tag-gray'}" style="cursor:pointer" onclick="toggleCheckinStatus(${r.id})">${r.checkin_status==='checked'?'✅ 已签到':'○ 未签到'}</span></td>`+
+      `<td>${r.checkin_status==='checked'
+        ? `<button class="btn btn-sm btn-ghost" onclick="undoCheckin(${r.id})">取消签到</button>`
+        : `<button class="btn btn-sm btn-primary" onclick="doCheckin(${r.id})">标记签到</button>`}</td>`+
+      `<td><button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteRegistration(${r.id})">删除</button></td></tr>`
+    ).join('');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function toggleAllCheckin(el) {
+  document.querySelectorAll('.ci-checkbox').forEach(cb => cb.checked = el.checked);
+}
+
+async function batchCheckin() {
+  const ids = [...document.querySelectorAll('.ci-checkbox:checked')].map(cb => cb.value);
+  if(!ids.length) { showToast('error','请先勾选要签到的人员'); return; }
+  for(const id of ids) {
+    try { await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({checkin_status:'checked'}) }); }
+    catch(e) { /* skip */ }
+  }
+  showToast('success',`✅ 已签到 ${ids.length} 人`);
+  loadCheckinList();
+}
+
+async function batchUncheck() {
+  const ids = [...document.querySelectorAll('.ci-checkbox:checked')].map(cb => cb.value);
+  if(!ids.length) { showToast('error','请先勾选要取消签到的人员'); return; }
+  for(const id of ids) {
+    try { await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({checkin_status:'unchecked'}) }); }
+    catch(e) { /* skip */ }
+  }
+  showToast('success',`🔄 已取消 ${ids.length} 人签到`);
+  loadCheckinList();
+}
+
+async function toggleCheckinStatus(id) {
+  try {
+    await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({checkin_status:'checked'}) });
+    showToast('success','✅ 签到成功');
+    loadCheckinList();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function undoCheckin(id) {
+  try {
+    await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({checkin_status:'unchecked'}) });
+    showToast('success','🔄 已取消签到');
+    loadCheckinList();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function doCheckin(id) {
+  try {
+    await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({checkin_status:'checked'}) });
+    showToast('success','✅ 签到成功');
+    loadCheckinList();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function deleteRegistration(id) {
+  if(!confirm('确定要删除此报名记录吗？')) return;
+  try {
+    await api('/api/registrations/'+id, { method:'DELETE' });
+    showToast('success','已删除');
+    // Reload both lists
+    if(document.getElementById('ciList')) loadCheckinList();
+    if(document.getElementById('regList')) loadRegistrations();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function editRegistration(id) {
+  // Fetch current registrations to find the one
+  const row = document.querySelector(`.reg-pay-select[data-id="${id}"]`)?.closest('tr');
+  if(!row) { showToast('error','请刷新后重试'); return; }
+  const name = row.cells[0]?.textContent?.trim() || '';
+  const phone = row.cells[1]?.textContent?.trim() || '';
+  const channel = row.cells[2]?.textContent?.trim() || '';
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="regEditModal"><div class="modal"><div class="modal-head"><h3>编辑报名信息</h3><button class="modal-close" onclick="document.getElementById('regEditModal').remove()">✕</button></div><div class="modal-body">`+
+    `<div class="form-group"><label>姓名</label><input id="re_name" value="${esc(name)}" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>`+
+    `<div class="form-group"><label>手机号</label><input id="re_phone" value="${esc(phone)}" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>`+
+    `<div class="form-group"><label>来源渠道</label><select id="re_channel" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;">`+
+    `<option value="">请选择</option><option value="一对一" ${channel==='一对一'?'selected':''}>一对一</option><option value="朋友圈" ${channel==='朋友圈'?'selected':''}>朋友圈</option><option value="社群" ${channel==='社群'?'selected':''}>社群</option><option value="小红书" ${channel==='小红书'?'selected':''}>小红书</option><option value="粗门" ${channel==='粗门'?'selected':''}>粗门</option></select></div>`+
+    `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('regEditModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="saveEditRegistration(${id})">保存</button></div></div></div>`);
+}
+
+async function saveEditRegistration(id) {
+  const name = document.getElementById('re_name').value.trim();
+  const phone = document.getElementById('re_phone').value.trim();
+  if(!name) { showToast('error','请输入姓名'); return; }
+  try {
+    await api('/api/registrations/'+id, { method:'PUT', body:JSON.stringify({name, phone, source_channel:document.getElementById('re_channel').value}) });
+    document.getElementById('regEditModal').remove();
+    showToast('success','✅ 已更新');
+    if(document.getElementById('regList')) loadRegistrations();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: CUSTOMERS
+// ─────────────────────────────────────────────────────────────────
+async function load_customers() {
+  const html = '<div class="page-header"><div><h2>客户管理</h2><p class="subtitle">所有参与过沙龙活动的客户档案</p></div><div class="page-header-right"><button class="btn btn-primary" onclick="showAddCustomer()">＋ 手动添加</button></div></div>' +
+    '<div class="stats-row" id="custStats"></div>' +
+    '<div class="filter-bar" style="margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">' +
+    '<input type="text" id="custSearch" placeholder="搜索姓名或手机号…" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;max-width:200px;">' +
+    '<select id="custMinPart" style="padding:6px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;">' +
+    '<option value="">参与次数</option><option value="1">≥1次</option><option value="2">≥2次</option><option value="3">≥3次</option><option value="5">≥5次</option></select>' +
+    '<input type="text" id="custTopic" placeholder="参与主题…" style="padding:6px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;max-width:160px;">' +
+    '<button class="btn btn-sm btn-primary" onclick="loadCustomerList()">🔍 搜索</button>' +
+    '</div>' +
+    '<div class="table-wrap"><table><thead><tr><th>姓名</th><th>手机号</th><th>参与次数</th><th>首次参与</th><th>操作</th></tr></thead><tbody id="custList"></tbody></table></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  loadCustomerList();
+}
+
+async function loadCustomerList() {
+  const search = document.getElementById('custSearch')?.value;
+  const minPart = document.getElementById('custMinPart')?.value;
+  const topic = document.getElementById('custTopic')?.value;
+  try {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (minPart) params.set('min_part', minPart);
+    if (topic) params.set('topic', topic);
+    const qs = params.toString();
+    const cs = await api('/api/customers' + (qs ? '?' + qs : ''));
+    const stats = document.getElementById('custStats');
+    const total = cs.length;
+    const repeat = cs.filter(c=>c.total_participations>=2).length;
+    stats.innerHTML =
+      `<div class="stat-card accent-gold"><div class="label">总客户数</div><div class="value">${total}</div></div>`+
+      `<div class="stat-card accent-green"><div class="label">老客户（≥2次）</div><div class="value">${repeat}</div><div class="change up">${total?Math.round(repeat/total*100):0}%</div></div>`+
+      `<div class="stat-card accent-blue"><div class="label">新客户（1次）</div><div class="value">${total-repeat}</div><div class="change">${total?Math.round((total-repeat)/total*100):0}%</div></div>`;
+    const tbody = document.getElementById('custList');
+    if(!cs.length) { tbody.innerHTML = '<tr><td colspan="6"><div class="state-empty"><p>暂无客户数据</p></div></td></tr>'; return; }
+    tbody.innerHTML = cs.map(c =>
+      `<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.phone)}</td><td>${c.total_participations} 次</td><td>${esc(c.first_activity||'-')}</td>`+
+      `<td><button class="btn btn-sm btn-outline" onclick="showCustomerDetail(${c.id})">查看</button> `+
+      `<button class="btn btn-sm btn-outline" onclick="editCustomer(${c.id})">修改</button> `+
+      `<button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteCustomer(${c.id})">删除</button></td></tr>`
+    ).join('');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function showCustomerDetail(id) {
+  try {
+    const c = await api('/api/customers/'+id);
+    document.body.insertAdjacentHTML('beforeend',
+      `<div class="modal-overlay active" id="custModal"><div class="modal"><div class="modal-head"><h3>客户详情 · ${esc(c.name)}</h3><button class="modal-close" onclick="document.getElementById('custModal').remove()">✕</button></div><div class="modal-body">`+
+      `<p><strong>手机号：</strong>${esc(c.phone)}</p><p><strong>微信：</strong>${esc(c.wechat||'-')}</p><p><strong>来源渠道：</strong>${esc(c.source_channel||'-')}</p><p><strong>累计参与：</strong>${c.total_participations} 次</p>`+
+      `<h4 style="margin-top:12px;font-size:13px;">参与记录</h4>`+
+      (c.registrations?.length ? c.registrations.map(r => `<div style="font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);">📅 ${r.created_at} · ✅ ${r.checkin_status==='checked'?'已签到':'未签到'}</div>`).join('') : '<p style="color:var(--text-light);font-size:12px;">暂无记录</p>')+
+      `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('custModal').remove()">关闭</button></div></div></div>`);
+  } catch(e) { showToast('error', String(e)); }
+}
+
+function showAddCustomer() {
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="acModal"><div class="modal"><div class="modal-head"><h3>手动添加客户</h3><button class="modal-close" onclick="document.getElementById('acModal').remove()">✕</button></div><div class="modal-body">`+
+    `<div class="form-group"><label>姓名 *</label><input id="ac_name"></div>`+
+    `<div class="form-group"><label>手机号</label><input id="ac_phone"></div>`+
+    `<div class="form-group"><label>微信</label><input id="ac_wechat"></div>`+
+    `<div class="form-group"><label>来源渠道</label><select id="ac_channel"><option value="">请选择</option><option>一对一</option><option>朋友圈</option><option>社群</option><option>小红书</option><option>粗门</option></select></div>`+
+    `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('acModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="saveCustomer()">保存</button></div></div></div>`);
+}
+
+async function saveCustomer() {
+  const name = document.getElementById('ac_name').value;
+  if(!name) { showToast('error','请输入姓名'); return; }
+  const editingId = document.getElementById('acModal').dataset.editId;
+  try {
+    if(editingId) {
+      await api('/api/customers/'+editingId, { method:'PUT', body:JSON.stringify({name, phone:ac_phone.value, wechat:ac_wechat.value, source_channel:ac_channel.value}) });
+      showToast('success','✅ 客户已更新');
+    } else {
+      await api('/api/customers', { method:'POST', body:JSON.stringify({name, phone:ac_phone.value, wechat:ac_wechat.value, source_channel:ac_channel.value}) });
+      showToast('success','✅ 客户已添加');
+    }
+    document.getElementById('acModal').remove();
+    loadCustomerList();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function editCustomer(id) {
+  const c = await api('/api/customers/'+id);
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="acModal" data-edit-id="${id}"><div class="modal"><div class="modal-head"><h3>修改客户信息</h3><button class="modal-close" onclick="document.getElementById('acModal').remove()">✕</button></div><div class="modal-body">`+
+    `<div class="form-group"><label>姓名 *</label><input id="ac_name" value="${esc(c.name)}"></div>`+
+    `<div class="form-group"><label>手机号</label><input id="ac_phone" value="${esc(c.phone)}"></div>`+
+    `<div class="form-group"><label>微信</label><input id="ac_wechat" value="${esc(c.wechat)}"></div>`+
+    `<div class="form-group"><label>来源渠道</label><select id="ac_channel"><option value="">请选择</option><option>一对一</option><option>朋友圈</option><option>社群</option><option>小红书</option><option>粗门</option></select></div>`+
+    `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('acModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="saveCustomer()">保存</button></div></div></div>`);
+  // Set the selected channel
+  setTimeout(() => {
+    const sel = document.getElementById('ac_channel');
+    for(let o of sel.options) { if(o.value === c.source_channel) o.selected = true; }
+  }, 50);
+}
+
+async function deleteCustomer(id) {
+  if(!confirm('确定要删除此客户吗？删除后不可恢复。')) return;
+  try {
+    await api('/api/customers/'+id, { method:'DELETE' });
+    showToast('success','✅ 客户已删除');
+    loadCustomerList();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: FEEDBACKS
+// ─────────────────────────────────────────────────────────────────
+async function load_feedbacks() {
+  const html = '<div class="page-header"><div><h2>反馈总结</h2><p class="subtitle">收集大家的反馈原话，自动分类总结</p></div><div class="page-header-right">' +
+    '<select id="fbActFilter" class="filter-btn" style="padding:5px 10px;" onchange="loadFeedbackSummary()"></select>' +
+    '<button class="btn btn-outline btn-sm" onclick="exportFeedbackSummary()">📤 导出总结</button>' +
+    '<button class="btn btn-outline btn-sm" onclick="uploadFeedbackFile()">📎 上传文件</button>' +
+    '<button class="btn btn-primary btn-sm" onclick="runAISummary()" id="aiSummaryBtn">🤖 AI智能总结</button>' +
+    '</div></div>' +
+    // AI Summary Card
+    '<div id="aiSummaryCard" style="display:none;background:linear-gradient(135deg,#f0f5ff,#e8f0fe);border:1px solid #c7d9f7;border-radius:10px;padding:16px;margin-bottom:14px;">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">' +
+    '<h4 style="font-size:14px;font-weight:700;color:#1a56db;">🤖 AI智能摘要</h4>' +
+    '<button onclick="document.getElementById(\'aiSummaryCard\').style.display=\'none\'" style="background:none;border:none;font-size:16px;cursor:pointer;color:#6b7a8f;">✕</button></div>' +
+    '<div id="aiSummaryText" style="font-size:13px;line-height:1.8;color:#1a2332;white-space:pre-wrap;"></div>' +
+    '<div id="aiKeywords" style="margin-top:8px;display:flex;gap:4px;flex-wrap:wrap;"></div>' +
+    '<div id="aiTrends" style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;"></div>' +
+    '</div>' +
+    '<div class="stats-row" style="grid-template-columns:1fr 1fr 1fr;">' +
+    '<div class="stat-card accent-green" id="fbPros"><div class="label">👍 优点</div><div class="value" style="font-size:14px;font-weight:400;line-height:1.6;" id="fbProsText">暂无数据</div></div>' +
+    '<div class="stat-card accent-orange" id="fbCons"><div class="label">📈 待提高</div><div class="value" style="font-size:14px;font-weight:400;line-height:1.6;" id="fbConsText">暂无数据</div></div>' +
+    '<div class="stat-card accent-blue" id="fbWants"><div class="label">🔮 想了解的内容</div><div class="value" style="font-size:14px;font-weight:400;line-height:1.6;" id="fbWantsText">暂无数据</div></div>' +
+    '</div>' +
+    // Topic Card
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4 style="display:flex;justify-content:space-between;align-items:center;">🎯 活动主题 <button class="btn btn-sm btn-outline" onclick="showTopicModal()">＋ 添加主题</button></h4>' +
+    '<div id="topicList" style="font-size:13px;color:var(--text-light);">暂无活动主题</div>' +
+    '</div>' +
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>✏️ 添加反馈原话</h4>' +
+    '<div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">' +
+    '<select id="fbCategory" class="filter-btn" style="padding:5px 10px;"><option value="">自动分类</option><option value="优点">👍 优点</option><option value="待提高">📈 待提高</option><option value="想了解">🔮 想了解</option></select>' +
+    '<select id="fbActId" class="filter-btn" style="padding:5px 10px;"></select>' +
+    '<select id="fbTopic" class="filter-btn" style="padding:5px 10px;"><option value="">选择主题（选填）</option></select></div>' +
+    '<div class="form-group"><textarea id="fbText" rows="2" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;" placeholder="输入参与者的反馈原话…"></textarea></div>' +
+    '<button class="btn btn-primary" onclick="addFeedback()">添加反馈</button>' +
+    '</div>' +
+    '<div class="table-wrap" style="margin-top:14px;"><table><thead><tr><th>内容</th><th>分类</th><th>时间</th><th>操作</th></tr></thead><tbody id="fbList"></tbody></table></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  try {
+    const acts = await api('/api/activities');
+    const sel = document.getElementById('fbActFilter');
+    sel.innerHTML = '<option value="">全部活动</option>';
+    acts.forEach(a => { sel.innerHTML += `<option value="${a.id}">${esc(a.name)}</option>`; });
+    const sel2 = document.getElementById('fbActId');
+    sel2.innerHTML = '';
+    acts.forEach(a => { sel2.innerHTML += `<option value="${a.id}">${esc(a.name)}</option>`; });
+    loadFeedbackSummary();
+    loadTopics();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ── 反馈主题管理 ──
+let feedbackTopics = [];
+
+function loadTopics() {
+  const stored = localStorage.getItem('feedback_topics');
+  if(stored) {
+    try { feedbackTopics = JSON.parse(stored); } catch(e) { feedbackTopics = []; }
+  }
+  renderTopics();
+}
+
+function renderTopics() {
+  const list = document.getElementById('topicList');
+  if(!list) return;
+  if(!feedbackTopics.length) {
+    list.innerHTML = '暂无活动主题，点击上方「＋ 添加主题」添加';
+    return;
+  }
+  list.innerHTML = feedbackTopics.map((t, i) =>
+    `<span style="display:inline-block;background:var(--gold-bg);color:var(--gold-dark);padding:3px 10px;border-radius:10px;font-size:12px;margin:3px;border:1px solid var(--gold);">${esc(t.name)} <span style="cursor:pointer;margin-left:4px;opacity:0.6;" onclick="deleteTopic(${i})">✕</span></span>`
+  ).join('');
+  // Update topic selector
+  const sel = document.getElementById('fbTopic');
+  if(sel) {
+    sel.innerHTML = '<option value="">选择主题（选填）</option>';
+    feedbackTopics.forEach(t => { sel.innerHTML += `<option value="${t.name}">${esc(t.name)}</option>`; });
+  }
+}
+
+function showTopicModal() {
+  document.body.insertAdjacentHTML('beforeend',
+    `<div class="modal-overlay active" id="topicModal"><div class="modal"><div class="modal-head"><h3>添加活动主题</h3><button class="modal-close" onclick="document.getElementById('topicModal').remove()">✕</button></div><div class="modal-body">`+
+    `<div class="form-group"><label>主题名称</label><input id="tp_name" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;"></div>`+
+    `</div><div class="modal-foot"><button class="btn btn-ghost" onclick="document.getElementById('topicModal').remove()">取消</button>`+
+    `<button class="btn btn-primary" onclick="saveTopic()">保存</button></div></div></div>`);
+  setTimeout(()=>document.getElementById('tp_name').focus(), 100);
+}
+
+function saveTopic() {
+  const name = document.getElementById('tp_name').value.trim();
+  if(!name) { showToast('error','请输入主题名称'); return; }
+  if(feedbackTopics.find(t => t.name === name)) { showToast('error','主题已存在'); return; }
+  feedbackTopics.push({name, created: new Date().toISOString().slice(0,10)});
+  localStorage.setItem('feedback_topics', JSON.stringify(feedbackTopics));
+  document.getElementById('topicModal').remove();
+  renderTopics();
+  showToast('success','✅ 主题已添加');
+}
+
+function deleteTopic(i) {
+  if(!confirm('确定删除此主题？')) return;
+  feedbackTopics.splice(i, 1);
+  localStorage.setItem('feedback_topics', JSON.stringify(feedbackTopics));
+  renderTopics();
+}
+
+// ── 导出反馈总结 ──
+function exportFeedbackSummary() {
+  const aid = document.getElementById('fbActFilter')?.value || '';
+  window.open('/api/feedbacks/export' + (aid ? '?activity_id='+aid : ''), '_blank');
+  showToast('success','📤 正在下载反馈总结报告');
+}
+
+// ── 上传文件导入反馈 ──
+function uploadFeedbackFile() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.docx,.xlsx,.xls,.pdf,.txt';
+  input.onchange = async function(e) {
+    const file = e.target.files[0];
+    if(!file) return;
+    const formData = new FormData();
+    formData.append('file', file);
+    const aid = document.getElementById('fbActFilter')?.value;
+    if(aid) formData.append('activity_id', aid);
+    try {
+      const resp = await fetch('/api/feedbacks/upload', { method:'POST', body:formData });
+      const data = await resp.json();
+      if(data.ok) {
+        showToast('success', `✅ 成功导入 ${data.count} 条反馈`);
+        loadFeedbackSummary();
+      } else {
+        showToast('error', data.error || '导入失败');
+      }
+    } catch(e) { showToast('error', '上传失败');
+    }
+  };
+  input.click();
+}
+
+async function loadFeedbackSummary() {
+  const aid = document.getElementById('fbActFilter')?.value;
+  let url = '/api/feedbacks/summary';
+  if(aid) url += '?activity_id='+aid;
+  try {
+    const data = await api(url);
+    document.getElementById('fbProsText').innerHTML = data.pros_text || '暂无数据';
+    document.getElementById('fbConsText').innerHTML = data.cons_text || '暂无数据';
+    document.getElementById('fbWantsText').innerHTML = data.wants_text || '暂无数据';
+
+    // 如果有AI摘要，显示在卡片的隐藏数据中
+    if(data.ai_summary && data.ai_summary !== '暂无数据') {
+      document.getElementById('aiSummaryText').textContent = data.ai_summary;
+      if(data.keywords && data.keywords.length) {
+        document.getElementById('aiKeywords').innerHTML = '🏷️ ' + data.keywords.map(k =>
+          `<span style="background:#fff;border:1px solid #c7d9f7;border-radius:10px;padding:1px 8px;font-size:11px;color:#1a56db;">${esc(k)}</span>`
+        ).join('');
+      }
+      if(data.trends && data.trends.length) {
+        document.getElementById('aiTrends').innerHTML = '📈 高频词: ' + data.trends.map(t =>
+          `<span style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:1px 8px;font-size:11px;color:#166534;">${esc(t)}</span>`
+        ).join('');
+      }
+    }
+
+    // Load list
+    const listResp = await fetch('/api/feedbacks' + (aid ? '?activity_id='+aid : ''));
+    const list = await listResp.json();
+    const tbody = document.getElementById('fbList');
+    if(!list.length) { tbody.innerHTML = '<tr><td colspan="4"><div class="state-empty"><p>暂无反馈</p></div></td></tr>'; return; }
+    tbody.innerHTML = list.map(f =>
+      `<tr><td style="font-size:13px;">${esc(f.raw_text)}</td><td>${f.category ? '<span class="tag tag-blue">'+esc(f.category)+'</span>' : '<span class="tag tag-gray">未分类</span>'}</td><td>${f.created_at}</td>`+
+      `<td><button class="btn btn-sm btn-ghost" style="color:var(--red)" onclick="deleteFeedback(${f.id})">删除</button></td></tr>`
+    ).join('');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ── AI智能总结 ──
+async function runAISummary() {
+  const btn = document.getElementById('aiSummaryBtn');
+  btn.disabled = true;
+  btn.textContent = '🤖 分析中…';
+  try {
+    const aid = document.getElementById('fbActFilter')?.value;
+    let url = '/api/feedbacks/summary';
+    if(aid) url += '?activity_id='+aid;
+    const data = await api(url);
+    if(!data.count) { showToast('error','暂无反馈数据'); return; }
+
+    document.getElementById('aiSummaryText').textContent = data.ai_summary || '未能生成摘要';
+
+    if(data.keywords && data.keywords.length) {
+      document.getElementById('aiKeywords').innerHTML = '🏷️ 关键词: ' + data.keywords.map(k =>
+        `<span style="background:#fff;border:1px solid #c7d9f7;border-radius:10px;padding:1px 8px;font-size:11px;color:#1a56db;">${esc(k)}</span>`
+      ).join('');
+    } else {
+      document.getElementById('aiKeywords').innerHTML = '';
+    }
+
+    if(data.trends && data.trends.length) {
+      document.getElementById('aiTrends').innerHTML = '📈 高频词: ' + data.trends.map(t =>
+        `<span style="background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:1px 8px;font-size:11px;color:#166534;">${esc(t)}</span>`
+      ).join('');
+    } else {
+      document.getElementById('aiTrends').innerHTML = '';
+    }
+
+    // 更新三栏摘要
+    if(data.pros_summary && data.pros_summary !== '暂无数据') {
+      document.getElementById('fbProsText').innerHTML = '<div style="font-size:13px;line-height:1.6;">' + esc(data.pros_summary) + '</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px;">共' + data.pros.length + '条反馈</div>';
+    }
+    if(data.cons_summary && data.cons_summary !== '暂无数据') {
+      document.getElementById('fbConsText').innerHTML = '<div style="font-size:13px;line-height:1.6;">' + esc(data.cons_summary) + '</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px;">共' + data.cons.length + '条反馈</div>';
+    }
+    if(data.wants_summary && data.wants_summary !== '暂无数据') {
+      document.getElementById('fbWantsText').innerHTML = '<div style="font-size:13px;line-height:1.6;">' + esc(data.wants_summary) + '</div><div style="font-size:11px;color:var(--text-muted);margin-top:4px;">共' + data.wants.length + '条反馈</div>';
+    }
+
+    document.getElementById('aiSummaryCard').style.display = 'block';
+    showToast('success', `✅ 已分析 ${data.count} 条反馈`);
+  } catch(e) { showToast('error', String(e)); }
+  finally { btn.disabled = false; btn.textContent = '🤖 AI智能总结'; }
+}
+
+async function addFeedback() {
+  const text = document.getElementById('fbText').value.trim();
+  if(!text) { showToast('error','请输入反馈内容'); return; }
+  const category = document.getElementById('fbCategory').value;
+  const activity_id = document.getElementById('fbActId').value;
+  try {
+    await api('/api/feedbacks', { method:'POST', body:JSON.stringify({raw_text:text, category, activity_id:activity_id||null}) });
+    document.getElementById('fbText').value = '';
+    showToast('success','✅ 反馈已添加');
+    loadFeedbackSummary();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function deleteFeedback(id) {
+  if(!confirm('确定删除此反馈？')) return;
+  try {
+    await api('/api/feedbacks/'+id, { method:'DELETE' });
+    showToast('success','已删除');
+    loadFeedbackSummary();
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: SETTINGS (QR Code Upload + Excel Downloads)
+// ─────────────────────────────────────────────────────────────────
+async function load_settings() {
+  const html = '<div class="page-header"><div><h2>设置</h2><p class="subtitle">系统配置管理</p></div></div>' +
+    '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">' +
+
+    // QR Code Upload Card
+    '<div class="form-card">' +
+    '<h4>📱 主理人微信收款二维码</h4>' +
+    '<p style="font-size:12px;color:var(--text-light);margin-bottom:10px;">用户报名成功后显示此二维码，长按识别添加主理人微信缴费</p>' +
+    '<div style="text-align:center;margin-bottom:12px;">' +
+    '<img id="previewQR" src="/static/qrcode.png?'+Date.now()+'" style="width:180px;height:180px;border:2px dashed var(--border);border-radius:8px;object-fit:cover;" onerror="this.src=\'data:image/svg+xml,<svg xmlns=\\\'http://www.w3.org/2000/svg\\\' width=\\\'180\\\' height=\\\'180\\\'><rect fill=\\\'%23f5f5f5\\\' width=\\\'180\\\' height=\\\'180\\\'/><text x=\\\'50%\\\' y=\\\'50%\\\' text-anchor=\\\'middle\\\' fill=\\\'%239aa8b9\\\' font-size=\\\'14\\\'>暂无二维码</text></svg>\'">' +
+    '</div>' +
+    '<div class="form-group">' +
+    '<label>上传二维码图片</label>' +
+    '<input type="file" id="qrFileInput" accept="image/*" style="padding:6px;">' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;">' +
+    '<button class="btn btn-primary" onclick="uploadQR()">📤 上传</button>' +
+    '<button class="btn btn-ghost" style="color:var(--red)" onclick="deleteQR()">🗑 删除</button>' +
+    '</div>' +
+    '<p style="font-size:11px;color:var(--text-light);margin-top:6px;">建议尺寸：300x300px 以上，PNG格式</p>' +
+    '</div>' +
+
+    // Excel Templates Card
+    '<div class="form-card">' +
+    '<h4>📋 物料模板下载</h4>' +
+    '<p style="font-size:12px;color:var(--text-light);margin-bottom:12px;">下载 Excel 格式的物料模板，填写后可用于活动现场</p>' +
+    '<div style="display:flex;flex-direction:column;gap:8px;">' +
+    '<a href="/api/templates/excel/checkin" class="btn btn-outline" style="justify-content:center;" download>📋 下载签到表模板 (Excel)</a>' +
+    '<a href="/api/templates/excel/flow" class="btn btn-outline" style="justify-content:center;" download>📋 下载活动流程模板 (Excel)</a>' +
+    '<a href="/api/templates/excel/materials" class="btn btn-outline" style="justify-content:center;" download>📋 下载物料清单模板 (Excel)</a>' +
+    '<a href="/api/templates/excel/salons" class="btn btn-outline" style="justify-content:center;" download>📊 下载往期沙龙数据汇总 (Excel)</a>' +
+    '</div>' +
+    '<p style="font-size:11px;color:var(--text-light);margin-top:10px;background:var(--gold-bg);padding:8px 12px;border-radius:6px;">💡 下载后填入内容，可在"物料模板"页面上传导入</p>' +
+    '</div>' +
+
+    '</div>' +
+    
+    // Mascot Card
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>🎨 沙龙吉祥物</h4>' +
+    '<p style="font-size:12px;color:var(--text-light);margin-bottom:8px;">上传吉祥物图片，显示在侧边栏Logo右侧</p>' +
+    '<div style="text-align:center;margin-bottom:10px;">' +
+    '<img id="previewMascot" src="/static/mascot.png?t=' + Date.now() + '" style="max-width:120px;max-height:120px;border-radius:8px;" onerror="this.style.display=\'none\'">' +
+    '</div>' +
+    '<div class="form-group"><input type="file" id="mascotFileInput" accept="image/*" style="padding:6px;"></div>' +
+    '<div style="display:flex;gap:8px;">' +
+    '<button class="btn btn-primary" onclick="uploadMascot()">📤 上传</button>' +
+    '<button class="btn btn-ghost" style="color:var(--red)" onclick="deleteMascot()">🗑 删除</button>' +
+    '</div>' +
+    '</div>' +
+
+    // Salon Intro Card
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>📖 沙龙简介</h4>' +
+    '<p style="font-size:12px;color:var(--text-light);margin-bottom:8px;">编辑后在总览页面顶部显示，可用于展示本期活动介绍</p>' +
+    '<div class="form-group"><textarea id="si_content" rows="3" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;" placeholder="输入沙龙简介内容…"></textarea></div>' +
+    '<div style="display:flex;gap:8px;align-items:center;">' +
+    '<button class="btn btn-primary" onclick="saveSalonIntro()">💾 保存</button>' +
+    '<button class="btn btn-ghost" style="color:var(--red)" onclick="deleteSalonIntro()">🗑 清空</button>' +
+    '<span id="si_status" style="color:var(--green);font-size:12px;display:none;">✅ 已保存</span>' +
+    '</div>' +
+    '</div>' +
+    // System Info
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>ℹ️ 系统信息</h4>' +
+    '<div style="font-size:13px;color:var(--text-light);display:grid;grid-template-columns:1fr 1fr;gap:6px;">' +
+    '<span>服务器地址: <strong>http://{{ lan_ip }}:5000</strong></span>' +
+    '<span>报名链接示例: <strong>http://{{ lan_ip }}:5000/register/6</strong></span>' +
+    '</div>' +
+    '</div>';
+  document.getElementById('mainContent').innerHTML = html;
+  // Load salon intro
+  fetch('/api/config/salon_intro').then(r=>r.json()).then(d => {
+    document.getElementById('si_content').value = d.value || '';
+  }).catch(()=>{});
+}
+
+async function saveSalonIntro() {
+  const val = document.getElementById('si_content').value;
+  try {
+    await api('/api/config/salon_intro', { method:'PUT', body:JSON.stringify({value:val}) });
+    const status = document.getElementById('si_status');
+    status.style.display = 'inline';
+    setTimeout(() => status.style.display = 'none', 2000);
+    showToast('success','✅ 简介已保存');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function uploadMascot() {
+  const fileInput = document.getElementById('mascotFileInput');
+  if (!fileInput.files || !fileInput.files[0]) { showToast('error', '请选择图片'); return; }
+  const formData = new FormData();
+  formData.append('qrcode', fileInput.files[0]);
+  try {
+    const resp = await fetch('/api/mascot/upload', { method:'POST', body:formData });
+    const data = await resp.json();
+    if (data.ok) {
+      showToast('success','✅ 吉祥物上传成功');
+      document.getElementById('previewMascot').src = '/static/mascot.png?'+Date.now();
+      // 刷新侧边栏吉祥物
+      const sm = document.getElementById('sidebarMascot');
+      if (sm) { sm.src = '/static/mascot.png?'+Date.now(); sm.style.display = ''; }
+    } else { showToast('error', data.error||'上传失败'); }
+  } catch(e) { showToast('error', '上传失败'); }
+}
+
+async function uploadQR() {
+  const fileInput = document.getElementById('qrFileInput');
+  if (!fileInput.files || !fileInput.files[0]) { showToast('error', '请选择图片'); return; }
+  const formData = new FormData();
+  formData.append('qrcode', fileInput.files[0]);
+  try {
+    const resp = await fetch('/api/qrcode', { method:'POST', body:formData });
+    const data = await resp.json();
+    if (data.ok) {
+      showToast('success','✅ 二维码上传成功！');
+      document.getElementById('previewQR').src = '/static/qrcode.png?'+Date.now();
+    } else { showToast('error', data.error||'上传失败'); }
+  } catch(e) { showToast('error', '上传失败'); }
+}
+
+async function deleteQR() {
+  if(!confirm('确定删除收款二维码？')) return;
+  try {
+    const data = await api('/api/qrcode', { method:'DELETE' });
+    if(data.ok) {
+      document.getElementById('previewQR').src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180"><rect fill="%23f5f5f5" width="180" height="180"/><text x="50%" y="50%" text-anchor="middle" fill="%239aa8b9" font-size="14">暂无二维码</text></svg>';
+      showToast('success','✅ 二维码已删除');
+    }
+  } catch(e) { showToast('error', '删除失败'); }
+}
+
+async function deleteMascot() {
+  if(!confirm('确定删除吉祥物？')) return;
+  try {
+    const data = await api('/api/mascot/upload', { method:'DELETE' });
+    if(data.ok) {
+      document.getElementById('previewMascot').style.display = 'none';
+      const sm = document.getElementById('sidebarMascot');
+      if(sm) sm.style.display = 'none';
+      showToast('success','✅ 吉祥物已删除');
+    }
+  } catch(e) { showToast('error', '删除失败'); }
+}
+
+async function deleteSalonIntro() {
+  if(!confirm('确定清空沙龙简介？')) return;
+  try {
+    await api('/api/config/salon_intro', { method:'PUT', body:JSON.stringify({value:''}) });
+    document.getElementById('si_content').value = '';
+    showToast('success','✅ 简介已清空');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: FEISHU BASE
+// ─────────────────────────────────────────────────────────────────
+async function load_feishu() {
+  const html = '<div class="page-header"><div><h2>飞书数据同步</h2><p class="subtitle">一键同步沙龙数据到飞书多维表格</p></div></div>' +
+    '<div class="form-card">' +
+    '<h4>🔗 飞书Base配置</h4>' +
+    '<p style="font-size:12px;color:var(--text-light);margin-bottom:10px;">粘贴飞书多维表格的链接，系统自动解析Token</p>' +
+    '<div class="form-group"><label>飞书Base链接</label>' +
+    '<input type="text" id="feishuBaseUrl" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:monospace;" placeholder="https://xxx.feishu.cn/base/xxx 或粘贴Base Token"></div>' +
+    '<div style="display:flex;gap:8px;align-items:center;">' +
+    '<button class="btn btn-primary" onclick="saveFeishuConfig()">💾 保存配置</button>' +
+    '<span id="feishuConfigStatus" style="font-size:12px;color:var(--green);display:none;">✅ 已保存</span>' +
+    '</div></div>' +
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>📡 连接状态</h4>' +
+    '<div id="feishuStatus"><span class="state-loading">检测中...</span></div></div>' +
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>📋 初始化表格</h4>' +
+    '<p style="font-size:12px;color:var(--text-light);margin-bottom:10px;">在飞书中创建「活动管理」「报名记录」「客户信息」三个多维表格</p>' +
+    '<button class="btn btn-secondary" onclick="initFeishuTables()">🛠 创建/更新表格结构</button>' +
+    '<span id="initTablesStatus" style="font-size:12px;color:var(--green);margin-left:10px;display:none;"></span></div>' +
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>🔄 手动同步</h4>' +
+    '<p style="font-size:12px;color:var(--text-light);margin-bottom:10px;">将本地数据一次性同步到飞书多维表格</p>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+    '<button class="btn btn-primary" onclick="syncFeishu(\'activities\')">📅 同步活动</button>' +
+    '<button class="btn btn-primary" onclick="syncFeishu(\'registrations\')">📋 同步报名</button>' +
+    '<button class="btn btn-primary" onclick="syncFeishu(\'customers\')">👥 同步客户</button>' +
+    '<button class="btn btn-outline" style="border-color:var(--gold);color:var(--gold-dark);" onclick="syncFeishu(\'all\')">🔄 同步全部</button>' +
+    '</div>' +
+    '<div id="syncProgress" style="display:none;font-size:13px;color:var(--text-light);padding:8px 0;"></div>' +
+    '<div id="syncResults" style="font-size:13px;"></div></div>' +
+    '<div class="form-card" style="margin-top:14px;">' +
+    '<h4>📜 同步日志</h4>' +
+    '<div id="syncLog" style="font-size:12px;color:var(--text-light);max-height:200px;overflow-y:auto;">加载中...</div>' +
+    '<div style="margin-top:8px;"><button class="btn btn-ghost btn-sm" onclick="clearSyncLogs()">🗑 清空日志</button></div></div>';
+  document.getElementById('mainContent').innerHTML = html;
+  loadFeishuConfig();
+  checkFeishuStatus();
+  loadSyncLogs();
+}
+
+async function loadFeishuConfig() {
+  try {
+    const data = await api('/api/feishu/config');
+    if (data.config && data.config.feishu_base_token) {
+      const el = document.getElementById('feishuBaseUrl');
+      if (el) el.value = data.config.feishu_base_token;
+    }
+  } catch(e) {}
+}
+
+async function checkFeishuStatus() {
+  try {
+    const data = await api('/api/feishu/status');
+    const el = document.getElementById('feishuStatus');
+    if (!el) return;
+    if (data.configured) {
+      let html = '<span style="color:var(--green);">✅ 已连接</span>' +
+        '<span style="margin-left:12px;font-size:12px;">发现 ' + (data.tables?.length || 0) + ' 个表格</span>';
+      if (data.tables && data.tables.length) {
+        html += '<div style="margin-top:6px;font-size:11px;color:var(--text-muted);">' +
+          data.tables.map(function(t) { return esc(t.name); }).join(' · ') + '</div>';
+      }
+      el.innerHTML = html;
+    } else {
+      el.innerHTML = '<span style="color:var(--orange);">⚠️ 未配置</span>' +
+        '<span style="margin-left:8px;font-size:12px;">请在上方粘贴飞书Base链接</span>';
+    }
+  } catch(e) {
+    const el = document.getElementById('feishuStatus');
+    if (el) el.innerHTML = '<span style="color:var(--red);">❌ 连接失败: ' + esc(String(e)) + '</span>';
+  }
+}
+
+async function saveFeishuConfig() {
+  const val = document.getElementById('feishuBaseUrl').value.trim();
+  if (!val) { showToast('error', '请输入飞书Base链接或Token'); return; }
+  try {
+    await api('/api/feishu/config', { method:'POST', body:JSON.stringify({base_url: val}) });
+    const statusEl = document.getElementById('feishuConfigStatus');
+    if (statusEl) { statusEl.style.display = 'inline'; setTimeout(function() { statusEl.style.display = 'none'; }, 2000); }
+    showToast('success', '配置已保存');
+    checkFeishuStatus();
+    setTimeout(initFeishuTables, 500);
+  } catch(e) { showToast('error', String(e)); }
+}
+
+async function initFeishuTables() {
+  const btns = document.querySelectorAll('.btn-secondary');
+  let btn = null;
+  for (let i = 0; i < btns.length; i++) {
+    if (btns[i].getAttribute('onclick') && btns[i].getAttribute('onclick').includes('initFeishuTables')) {
+      btn = btns[i]; break;
+    }
+  }
+  if (btn) btn.disabled = true;
+  const statusEl = document.getElementById('initTablesStatus');
+  if (statusEl) { statusEl.style.display = 'inline'; statusEl.textContent = '⏳ 创建中...'; }
+  try {
+    const data = await api('/api/feishu/init-tables', { method:'POST' });
+    if (statusEl) statusEl.textContent = '✅ 表格已就绪: ' + Object.keys(data.tables||{}).join(', ');
+    showToast('success', '表格初始化完成');
+    checkFeishuStatus();
+  } catch(e) {
+    if (statusEl) statusEl.textContent = '❌ ' + String(e);
+    showToast('error', String(e));
+  }
+  if (btn) btn.disabled = false;
+}
+
+async function syncFeishu(table) {
+  const progress = document.getElementById('syncProgress');
+  const results = document.getElementById('syncResults');
+  if (progress) { progress.style.display = 'block'; progress.textContent = '⏳ 正在同步 ' + (table === 'all' ? '全部数据' : table) + '...'; }
+  if (results) results.innerHTML = '';
+  try {
+    const data = await api('/api/feishu/sync', { method:'POST', body:JSON.stringify({table: table}) });
+    if (progress) progress.style.display = 'none';
+    if (results) {
+      var html = '<div style="margin-top:8px;background:var(--card);padding:10px 14px;border-radius:6px;font-size:13px;">✅ 同步完成</div>';
+      if (data.results) {
+        for (var key in data.results) {
+          var val = data.results[key];
+          html += '<div style="font-size:12px;margin-top:4px;">' + key + ': ' + (val.ok ? '✅ 成功 ' + val.total + ' 条' : '❌ ' + (val.error||'失败')) + '</div>';
+        }
+      }
+      results.innerHTML = html;
+    }
+    loadSyncLogs();
+    showToast('success', '同步完成');
+  } catch(e) {
+    if (progress) progress.style.display = 'none';
+    if (results) results.innerHTML = '<div style="color:var(--red);padding:8px;">❌ ' + esc(String(e)) + '</div>';
+    showToast('error', String(e));
+  }
+}
+
+async function loadSyncLogs() {
+  try {
+    const data = await api('/api/feishu/config');
+    const logs = data.config?.feishu_sync_log || [];
+    const el = document.getElementById('syncLog');
+    if (!el) return;
+    if (!logs.length) { el.innerHTML = '<span style="color:var(--text-muted);">暂无同步记录</span>'; return; }
+    var reversed = logs.slice(-20).reverse();
+    el.innerHTML = reversed.map(function(l) {
+      return '<div style="padding:4px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;">' +
+        '<span>' + esc(l.table || '') + ' → ' + esc(l.status || '') + '</span>' +
+        '<span style="color:var(--text-muted);">' + (l.time||'') + ' | ' + (l.count||0) + '条</span></div>';
+    }).join('');
+  } catch(e) {}
+}
+
+async function clearSyncLogs() {
+  try {
+    await api('/api/feishu/clear-logs', { method:'POST' });
+    const el = document.getElementById('syncLog');
+    if (el) el.innerHTML = '<span style="color:var(--text-muted);">暂无同步记录</span>';
+    showToast('success', '日志已清空');
+  } catch(e) { showToast('error', String(e)); }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// PAGE: DATA BOARD
+// ─────────────────────────────────────────────────────────────────
+async function load_databoard() {
+  load_dashboard();
+  // 数据看板与总览使用相同数据，添加额外指标
+  setTimeout(() => {
+    const header = document.querySelector('.page-header');
+    if(header) {
+      header.innerHTML = '<div><h2>数据看板</h2><p class="subtitle">所有关键运营指标自动计算</p></div>';
+    }
+  }, 100);
+}
+
+// ── Init ──
+load_dashboard();
+</script>
+</body>
+</html>
