@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>{{ act.name }} · 报名</title>
+<style>
+:root { --gold: #c9a961; --gold-light: #e0c878; --gold-dark: #a88a3e; --navy: #0f1724; --navy-light: #1a2a44; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f7fa; color: #1a2332; line-height: 1.6; }
+
+/* Hero Section */
+.hero {
+  background: linear-gradient(135deg, var(--navy) 0%, #1a2a44 100%);
+  padding: 36px 22px 30px;
+  color: #fff;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: ''; position: absolute; top: -50%; left: -50%;
+  width: 200%; height: 200%;
+  background: radial-gradient(circle at 30% 50%, rgba(201,169,97,0.08) 0%, transparent 50%);
+}
+.hero .badge {
+  display: inline-block;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--gold);
+  text-transform: uppercase;
+  font-weight: 600;
+  background: rgba(201,169,97,0.12);
+  padding: 3px 12px;
+  border-radius: 4px;
+  position: relative;
+  z-index: 1;
+}
+.hero h1 {
+  font-size: 24px;
+  font-weight: 700;
+  margin: 10px 0 6px;
+  position: relative;
+  z-index: 1;
+}
+.hero .subtitle {
+  font-size: 13px;
+  color: rgba(255,255,255,0.6);
+  margin-bottom: 14px;
+  position: relative;
+  z-index: 1;
+}
+.hero-meta {
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: rgba(255,255,255,0.7);
+  position: relative;
+  z-index: 1;
+}
+.hero-meta span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* Container */
+.container { padding: 18px 16px 90px; max-width: 480px; margin: 0 auto; }
+
+/* Info Card */
+.info-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  border: 1px solid #e8ecf0;
+}
+.info-card .label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #9aa8b9;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.info-card .value {
+  font-size: 14px;
+  color: #1a2332;
+}
+.guest-card { margin-bottom: 14px; }
+
+/* Highlight */
+.highlight {
+  background: rgba(201,169,97,0.08);
+  border-left: 3px solid var(--gold);
+  padding: 12px 16px;
+  border-radius: 0 8px 8px 0;
+  font-size: 13px;
+  color: #a88a3e;
+  margin-bottom: 14px;
+  line-height: 1.7;
+}
+
+/* Flow */
+.flow-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 6px 0;
+}
+.flow-item .time {
+  width: 44px;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--gold-dark);
+  padding-top: 2px;
+}
+.flow-item .desc { flex: 1; }
+.flow-item .desc .title { font-weight: 600; font-size: 14px; }
+.flow-item .desc .sub { font-size: 12px; color: #6b7a8f; }
+
+/* Tags */
+.tags { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.tag {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  font-weight: 500;
+  background: rgba(201,169,97,0.08);
+  color: var(--gold-dark);
+}
+
+.features { margin-bottom: 16px; }
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: #4a5568;
+}
+.feature-item .icon { color: var(--gold); font-weight: 700; }
+
+/* Form */
+.form-card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  border: 1px solid #e8ecf0;
+}
+.form-card h3 {
+  font-size: 17px;
+  font-weight: 700;
+  margin-bottom: 16px;
+  color: var(--navy);
+}
+.form-group { margin-bottom: 14px; }
+.form-group label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a2332;
+  margin-bottom: 4px;
+}
+.form-group label .required { color: #d94a4a; }
+.form-group input, .form-group select {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid #e2e6ed;
+  border-radius: 8px;
+  font-size: 15px;
+  outline: none;
+  -webkit-appearance: none;
+  background: #fff;
+}
+.form-group input:focus, .form-group select:focus {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(201,169,97,0.12);
+}
+.form-group .error-text {
+  font-size: 12px;
+  color: #d94a4a;
+  margin-top: 2px;
+  display: none;
+}
+.form-group.has-error input { border-color: #d94a4a; }
+.form-group.has-error .error-text { display: block; }
+
+/* Submit Button */
+.submit-btn {
+  width: 100%;
+  padding: 14px;
+  background: linear-gradient(135deg, var(--gold) 0%, var(--gold-light) 100%);
+  color: var(--navy);
+  border: none;
+  border-radius: 10px;
+  font-size: 17px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 1px;
+  margin-top: 6px;
+}
+.submit-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(201,169,97,0.3); }
+.submit-btn:disabled { opacity: 0.6; transform: none; box-shadow: none; }
+
+/* Success Page */
+.success-page { display: none; text-align: center; padding: 40px 20px; }
+.success-page.show { display: block; }
+.success-page .check { font-size: 60px; margin-bottom: 12px; }
+.success-page h2 { font-size: 22px; color: var(--navy); margin-bottom: 8px; }
+.success-page p { font-size: 14px; color: #6b7a8f; margin-bottom: 6px; line-height: 1.8; }
+.success-page .qrcode-box {
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+  margin: 20px auto;
+  max-width: 220px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+  border: 1px solid #e8ecf0;
+}
+.success-page .qrcode-box .qr-placeholder {
+  width: 160px;
+  height: 160px;
+  background: #f5f5f5;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 60px;
+  color: #9aa8b9;
+}
+
+/* Toast */
+.toast {
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-100px);
+  background: #fff; border-radius: 8px; padding: 10px 18px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12); border: 1px solid #e2e6ed;
+  font-size: 13px; z-index: 100;
+  transition: transform 0.3s;
+}
+.toast.show { transform: translateX(-50%) translateY(0); }
+.toast.error { border-left: 3px solid #d94a4a; }
+
+/* Responsive */
+@media (max-width: 360px) {
+  .hero h1 { font-size: 20px; }
+  .container { padding: 14px 12px 80px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ===== REGISTRATION FORM (visible) ===== -->
+<div id="regForm">
+  <div class="hero">
+    <div class="badge">{% if act.date %}{{ act.date }}{% endif %}</div>
+    <h1>{{ act.name }}</h1>
+    <p class="subtitle">{{ act.theme }}</p>
+    <div class="hero-meta">
+      {% if act.date %}<span>📅 {{ act.date }}</span>{% endif %}
+      {% if act.time %}<span>⏰ {{ act.time }}</span>{% endif %}
+      {% if act.venue %}<span>📍 {{ act.venue }}</span>{% endif %}
+    </div>
+  </div>
+
+  <div class="container">
+    <!-- 活动详情 -->
+    {% if act.desc_text %}
+    <div class="info-card">
+      <div class="value">{{ act.desc_text }}</div>
+    </div>
+    {% endif %}
+
+    {% if act.highlight_text %}
+    <div class="highlight">{{ act.highlight_text|replace('\n', '<br>')|safe }}</div>
+    {% endif %}
+
+    {% if act.tags %}
+    <div class="tags">
+      {% for tag in act.tags.split(',') %}
+        <span class="tag">{{ tag.strip() }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- 嘉宾 -->
+    {% if act.guest_desc %}
+    <div class="info-card guest-card">
+      <div class="label">🎤 特邀嘉宾</div>
+      <div class="value">{{ act.guest_desc }}</div>
+    </div>
+    {% endif %}
+
+    <!-- 活动流程 -->
+    {% set flow = act.flow_json|fromjson %}
+    {% if flow and flow|length > 0 %}
+    <div class="info-card">
+      <div class="label" style="margin-bottom:6px;">📋 活动流程</div>
+      {% for item in flow %}
+      <div class="flow-item">
+        <div class="time">{{ item.time }}</div>
+        <div class="desc">
+          <div class="title">{{ item.title }}</div>
+          {% if item.desc %}<div class="sub">{{ item.desc }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- 报名表单 -->
+    <div class="form-card">
+      <h3>📝 立即报名</h3>
+      <div id="formError" style="display:none;background:#fef2f2;color:#d94a4a;padding:8px 12px;border-radius:6px;font-size:13px;margin-bottom:12px;"></div>
+      <div class="form-group" id="fg_name">
+        <label>姓名 <span class="required">*</span></label>
+        <input type="text" id="reg_name" placeholder="请输入您的姓名">
+        <div class="error-text">请输入姓名</div>
+      </div>
+      <div class="form-group" id="fg_phone">
+        <label>手机号/微信号 <span class="required">*</span></label>
+        <input type="text" id="reg_phone" placeholder="手机号或微信号，方便主理人联系你">
+        <div class="error-text">请输入手机号或微信号</div>
+      </div>
+      <div class="form-group">
+        <label>了解渠道（选填）</label>
+        <select id="reg_channel">
+          <option value="">请选择了解渠道</option>
+          <option value="小红书">小红书</option>
+          <option value="粗门">粗门</option>
+          <option value="朋友圈">朋友圈</option>
+          <option value="老用户邀请">老用户邀请</option>
+          <option value="一对一邀约">一对一邀约</option>
+        </select>
+      </div>
+      <button class="submit-btn" id="submitBtn" onclick="submitReg()">立即报名 →</button>
+      <p style="text-align:center;font-size:11px;color:#9aa8b9;margin-top:10px;">提交后添加主理人微信缴费确认才算报名成功</p>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SUCCESS PAGE ===== -->
+<div class="success-page" id="successPage">
+  <div class="check" style="font-size:48px;">📱</div>
+  <h2>报名信息已提交！</h2>
+  <p id="successName" style="font-weight:600;color:var(--navy);"></p>
+  <div style="background:#fff7ed;border:1px solid #fde68a;border-radius:10px;padding:16px;margin:14px 0;text-align:center;">
+    <p style="font-size:15px;font-weight:700;color:#c2410c;margin-bottom:4px;">⚠️ 还未报名成功</p>
+    <p style="font-size:13px;color:#9a3412;">请<strong>长按识别下方二维码</strong>添加主理人微信<br>
+    发送「<span id="successWechatHint" style="font-weight:700;color:var(--gold-dark);"></span>」<br>
+    完成缴费后才算<strong>真正报名成功</strong></p>
+  </div>
+  <div class="qrcode-box">
+    <img id="qrcodeImg" src="/static/qrcode.png" alt="主理人微信二维码"
+         style="width:180px;height:180px;display:block;margin:0 auto;border-radius:8px;"
+         onerror="this.style.display='none';document.getElementById('qrcodeFallback').style.display='block'">
+    <div id="qrcodeFallback" style="display:none;width:160px;height:160px;background:#f5f5f5;margin:0 auto;display:none;align-items:center;justify-content:center;font-size:40px;border-radius:8px;">💬</div>
+    <p style="margin-top:6px;font-size:12px;color:#c2410c;font-weight:600;">👆 长按识别添加主理人微信</p>
+  </div>
+  <div style="background:#f0fdf4;border-radius:8px;padding:12px;margin-top:14px;text-align:center;">
+    <p style="font-size:12px;color:#166534;">✅ 添加后发送报名姓名，主理人会确认名额<br>缴费完成后你的报名状态会更新为"已付款"</p>
+  </div>
+  <p style="font-size:12px;color:#9aa8b9;margin-top:14px;">如有疑问请联系：<strong>主理人李梅</strong></p>
+</div>
+
+<!-- Toast -->
+<div id="toast" class="toast"><span id="toastMsg"></span></div>
+
+<script>
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.className = 'toast ' + (type||'');
+  document.getElementById('toastMsg').textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+async function submitReg() {
+  const name = document.getElementById('reg_name').value.trim();
+  const phone = document.getElementById('reg_phone').value.trim();
+  const channel = document.getElementById('reg_channel').value;
+  const errorDiv = document.getElementById('formError');
+
+  // 验证
+  let valid = true;
+  document.querySelectorAll('.form-group.has-error').forEach(e => e.classList.remove('has-error'));
+  errorDiv.style.display = 'none';
+
+  if (!name) { document.getElementById('fg_name').classList.add('has-error'); valid = false; }
+  if (!phone) { document.getElementById('fg_phone').classList.add('has-error'); valid = false; }
+  if (!valid) return;
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = '提交中…';
+
+  try {
+    const resp = await fetch('/api/register', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({activity_id: {{ act.id }}, name, phone, wechat: phone, source_channel: channel})
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      document.getElementById('successName').textContent = '🙌 ' + data.name + '，您已提交「' + data.activity_name + '」报名信息';
+      document.getElementById('successWechatHint').textContent = '活动报名 + ' + data.name;
+      document.getElementById('regForm').style.display = 'none';
+      document.getElementById('successPage').classList.add('show');
+    } else {
+      errorDiv.textContent = data.error || '报名失败';
+      errorDiv.style.display = 'block';
+    }
+  } catch(e) {
+    errorDiv.textContent = '网络错误，请稍后重试';
+    errorDiv.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '立即报名 →';
+  }
+}
+</script>
+</body>
+</html>
